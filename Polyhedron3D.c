@@ -21,15 +21,19 @@ Polyhedron3D* new_Polyhedron3D_vefs(Vector_points3D* vertices, GrB_Matrix* edges
     GrB_Index nb_rows;
     Polyhedron3D* p = (Polyhedron3D*) malloc(sizeof(Polyhedron3D));
 
-    p->vertices = vertices;
-    p->edges = edges;
-    p->faces = faces;
+    p->vertices = alloc_empty_vec_pts3D();
+    copy_vec_pts3D(vertices, p->vertices);
+    p->edges = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+    GrB_Matrix_dup(p->edges, *edges);
+    p->faces = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+    GrB_Matrix_dup(p->faces, *faces);
 
     p->volumes = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
     infogrb = GrB_Matrix_ncols(&nb_rows, *(p->faces));
     infogrb = GrB_Matrix_new(p->volumes, GrB_INT8, nb_rows, 1);
 
-    p->status_face = status_face;
+    p->status_face = alloc_empty_vec_int();
+    copy_vec_int(status_face, p->status_face);
     
     return p;
 }
@@ -37,16 +41,21 @@ Polyhedron3D* new_Polyhedron3D_vefs(Vector_points3D* vertices, GrB_Matrix* edges
 Polyhedron3D* new_Polyhedron3D_vefvs(Vector_points3D* vertices, GrB_Matrix* edges, GrB_Matrix* faces, GrB_Matrix* volumes, Vector_int* status_face){
     Polyhedron3D* p = (Polyhedron3D*) malloc(sizeof(Polyhedron3D));
 
-    p->vertices = vertices;
-    p->edges = edges;
-    p->faces = faces;
-    p->volumes = volumes;
-    p->status_face = status_face;
+    p->vertices = alloc_empty_vec_pts3D();
+    copy_vec_pts3D(vertices, p->vertices);
+    p->edges = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+    GrB_Matrix_dup(p->edges, *edges);
+    p->faces = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+    GrB_Matrix_dup(p->faces, *faces);
+    p->volumes = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+    GrB_Matrix_dup(p->volumes, *volumes);
+    p->status_face = alloc_empty_vec_int();
+    copy_vec_int(status_face, p->status_face);
     
     return p;
 }
 
-Polyhedron3D* Polyhedron3D_from_vertices(const double* x_v, unsigned long int n_x, const double* y_v, unsigned long int n_y, const double* z_v, unsigned long int n_z){
+Polyhedron3D* Polyhedron3D_from_vertices(const my_real* x_v, unsigned long int n_x, const my_real* y_v, unsigned long int n_y, const my_real* z_v, unsigned long int n_z){
     GrB_Info infogrb;
     GrB_Index nb_pts, nb_edges, nb_faces, nb_volumes;
     uint64_t curr_face, curr_pt, curr_edge, curr_vol, iy, ix, iz;
@@ -56,7 +65,7 @@ Polyhedron3D* Polyhedron3D_from_vertices(const double* x_v, unsigned long int n_
     uint64_t ind_e_W_up, ind_e_S_up;
     uint64_t ind_e_SW_up, ind_e_SE_up, ind_e_NW_up;
     uint64_t face_W, face_B, face_S, face_E, face_N, face_U;
-    double yS, xW, zB;
+    my_real yS, xW, zB;
     Point3D ptSWB;
     Vector_points3D* vertices;
     Vector_int* status_face;
@@ -723,9 +732,11 @@ void copy_Polyhedron3D(const Polyhedron3D *src, Polyhedron3D *dest){
 }
 
 void dealloc_Polyhedron3D(Polyhedron3D* p){
-    dealloc_vec_pts3D(p->vertices);
-    GrB_free(p->edges);
-    GrB_free(p->faces);
-    GrB_free(p->volumes);
-    dealloc_vec_int(p->status_face);
+    if(p){
+        dealloc_vec_pts3D(p->vertices);
+        GrB_free(p->edges);
+        GrB_free(p->faces);
+        GrB_free(p->volumes);
+        dealloc_vec_int(p->status_face);
+    }
 }

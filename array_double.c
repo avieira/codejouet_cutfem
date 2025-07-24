@@ -5,10 +5,10 @@
 
 Array_double* alloc_empty_arr_double(){
     Array_double* v = (Array_double*)malloc(sizeof(Array_double));
-    v->data = NULL;
+    v->data = (my_real*)malloc(sizeof(my_real));
     v->nrows = 0;
     v->ncols = 0;
-    v->capacity = 0;
+    v->capacity = 1;
 
     return v;
 }
@@ -16,7 +16,7 @@ Array_double* alloc_empty_arr_double(){
 //Allocated with all data = 0
 Array_double* alloc_with_capacity_arr_double(uint64_t nrows, uint64_t ncols){
     Array_double* v = (Array_double*)malloc(sizeof(Array_double));
-    v->data = (double*)calloc(nrows*ncols, sizeof(double));
+    v->data = (my_real*)calloc(nrows*ncols, sizeof(my_real));
     v->nrows = nrows;
     v->ncols = ncols;
     v->capacity = nrows*ncols;
@@ -24,10 +24,10 @@ Array_double* alloc_with_capacity_arr_double(uint64_t nrows, uint64_t ncols){
     return v;
 }
 
-Array_double* alloc_with_init_arr_double(const double* data, uint64_t ncols, uint64_t nrows){
+Array_double* alloc_with_init_arr_double(const my_real* data, uint64_t ncols, uint64_t nrows){
     Array_double* v = (Array_double*)malloc(sizeof(Array_double));
-    v->data = (double*)calloc(ncols*nrows, sizeof(double));
-    memcpy(v->data, data, ncols*nrows*sizeof(double));
+    v->data = (my_real*)calloc(ncols*nrows, sizeof(my_real));
+    memcpy(v->data, data, ncols*nrows*sizeof(my_real));
     v->nrows = nrows;
     v->ncols = ncols;
     v->capacity = ncols*nrows;
@@ -37,12 +37,12 @@ Array_double* alloc_with_init_arr_double(const double* data, uint64_t ncols, uin
 
 void double_capacity_arr_double(Array_double* v){
     v->capacity *= 2;
-    v->data = (double*) realloc(v->data, v->capacity*sizeof(double));
+    v->data = (my_real*) realloc(v->data, v->capacity*sizeof(my_real));
 }
 
 void dealloc_arr_double(Array_double* v){
     if(v!=NULL){
-        free(v->data);
+        if (v->data) free(v->data);
         v->data = NULL;
         v->capacity = 0;
         v->nrows = 0;
@@ -51,17 +51,17 @@ void dealloc_arr_double(Array_double* v){
 }
 
 double* get_ijth_elem_arr_double(const Array_double* v, const uint64_t i, const uint64_t j){
-    double* p;
+    my_real* p;
     if ((i<v->nrows) && (j<v->ncols)) {
         return v->data + i*v->ncols + j;
     } else {
-        p = (double*) malloc(sizeof(double));
+        p = (my_real*) malloc(sizeof(my_real));
         *p = 0.0/0.0;
         return p;
     }
 }
 
-void set_ijth_elem_arr_double(Array_double* v, const uint64_t i, const uint64_t j, double* d){
+void set_ijth_elem_arr_double(Array_double* v, const uint64_t i, const uint64_t j, my_real* d){
     if (j >= v->ncols){
         printf("ERROR in set set_ijth_elem_arr_double : j bigger than number of columns!");
     }
@@ -82,8 +82,8 @@ void copy_arr_double(const Array_double* src, Array_double* dest){
     } else {
         if (dest != NULL){
             free(dest->data);
-            dest->data = (double*)malloc(src->capacity*sizeof(double));
-            memcpy(dest->data, src->data, src->nrows*src->ncols*sizeof(double));
+            dest->data = (my_real*)malloc(src->capacity*sizeof(my_real));
+            memcpy(dest->data, src->data, src->nrows*src->ncols*sizeof(my_real));
             dest->nrows = src->nrows;
             dest->ncols = src->ncols;
             dest->capacity = src->capacity;
@@ -93,7 +93,7 @@ void copy_arr_double(const Array_double* src, Array_double* dest){
 
 void print_arr_double(const Array_double* v){
     unsigned long int i, j;
-    double* vi;
+    my_real* vi;
 
     printf("v = [");
     for (i = 0; i<v->nrows-1; i++){

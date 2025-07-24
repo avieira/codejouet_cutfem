@@ -8,9 +8,9 @@
 //----------------------------------------------------------------------------------------
 Vector_points2D* alloc_empty_vec_pts2D(){
     Vector_points2D* v = (Vector_points2D*)malloc(sizeof(Vector_points2D));
-    v->points = NULL;
+    v->points = (Point2D*)malloc(sizeof(Point2D));
     v->size = 0;
-    v->capacity = 0;
+    v->capacity = 1;
 
     return v;
 }
@@ -63,8 +63,10 @@ void push_back_vec_pts2D(Vector_points2D* v, const Point2D* point){
 
 void dealloc_vec_pts2D(Vector_points2D* v){
     if (v!=NULL){
-        free(v->points);
-        v->points = NULL;
+        if(v->points){
+            free(v->points);
+            v->points = NULL;
+        }
         v->capacity = 0;
         v->size = 0;
     }
@@ -119,14 +121,21 @@ void print_vec_pt2D(const Vector_points2D p){
     printf("]\n");
 }
 
+Vector_points2D* cat_vec_pts2D(const Vector_points2D* v1, const Vector_points2D* v2){
+    Vector_points2D *catv = alloc_with_capacity_vec_pts2D(v1->size + v2->size);
+    memcpy(catv->points, v1->points, v1->size*sizeof(Point2D));
+    memcpy(catv->points+v1->size, v2->points, v2->size*sizeof(Point2D));
+    return catv;
+}
+
 //----------------------------------------------------------------------------------------
 //                                 3D POINTS
 //----------------------------------------------------------------------------------------
 Vector_points3D* alloc_empty_vec_pts3D(){
     Vector_points3D* v = (Vector_points3D*)malloc(sizeof(Vector_points3D));
-    v->points = NULL;
+    v->points = (Point3D*)malloc(sizeof(Point3D));
     v->size = 0;
-    v->capacity = 0;
+    v->capacity = 1;
 
     return v;
 }
@@ -174,8 +183,10 @@ void push_back_vec_pts3D(Vector_points3D* v, const Point3D* point){
 
 void dealloc_vec_pts3D(Vector_points3D* v){
     if (v!=NULL){
-        free(v->points);
-        v->points = NULL;
+        if(v->points){
+            free(v->points);
+            v->points = NULL;
+        }
         v->capacity = 0;
         v->size = 0;
     }
@@ -231,14 +242,22 @@ void print_vec_pt3D(const Vector_points3D p){
     printf("]\n");
 }
 
+Vector_points3D* cat_vec_pts3D(const Vector_points3D* v1, const Vector_points3D* v2){
+    Vector_points3D *catv = alloc_with_capacity_vec_pts3D(v1->size + v2->size);
+    memcpy(catv->points, v1->points, v1->size*sizeof(Point3D));
+    memcpy(catv->points+v1->size, v2->points, v2->size*sizeof(Point3D));
+    return catv;
+}
+
+
 //----------------------------------------------------------------------------------------
 //                                 4D POINTS
 //----------------------------------------------------------------------------------------
 Vector_points4D* alloc_empty_vec_pts4D(){
     Vector_points4D* v = (Vector_points4D*)malloc(sizeof(Vector_points4D));
-    v->points = NULL;
+    v->points = (Point4D*)malloc(sizeof(Point4D));
     v->size = 0;
-    v->capacity = 0;
+    v->capacity = 1;
 
     return v;
 }
@@ -286,8 +305,10 @@ void push_back_vec_pts4D(Vector_points4D* v, const Point4D* point){
 
 void dealloc_vec_pts4D(Vector_points4D* v){
     if (v!=NULL){
-        free(v->points);
-        v->points = NULL;
+        if(v->points){
+            free(v->points);
+            v->points = NULL;
+        }
         v->capacity = 0;
         v->size = 0;
     }
@@ -342,4 +363,11 @@ void print_vec_pt4D(const Vector_points4D p){
         print_pt4D(pt);
     }
     printf("]\n");
+}
+
+Vector_points4D* cat_vec_pts4D(const Vector_points4D* v1, const Vector_points4D* v2){
+    Vector_points4D *catv = alloc_with_capacity_vec_pts4D(v1->size + v2->size);
+    memcpy(catv->points, v1->points, v1->size*sizeof(Point4D));
+    memcpy(catv->points+v1->size, v2->points, v2->size*sizeof(Point4D));
+    return catv;
 }

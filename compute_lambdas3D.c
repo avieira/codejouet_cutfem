@@ -1,10 +1,13 @@
 #include "compute_lambdas3D.h"
 #include <math.h>
+#include "update_clipped.h"
 
-static double norm(const Point3D* p){
+// Norm of `p`
+static my_real norm(const Point3D* p){
     return sqrt(p->x*p->x + p->y*p->y + p->t*p->t);
 }
 
+//Returns a polygon consisting in only the extracted face.
 static Polygon2D* extract_ith_face(const Polygon2D *p, uint64_t extr_index){
     GrB_Matrix *new_faces, *intermediate_faces, *new_edges;
     Vector_points2D *new_vertices;
@@ -109,10 +112,17 @@ static Polygon2D* extract_ith_face(const Polygon2D *p, uint64_t extr_index){
     free(edge_indices);
     free(nm);
     dealloc_vec_uint(pts_kept_inds);
+    GrB_free(&val_extr);
+    GrB_free(&J_vect);
+    GrB_free(&pt_indices);
+    GrB_free(intermediate_faces);
 
     return new_Polygon2D_vefs(new_vertices, new_edges, new_faces, new_status_edge);
 }
 
+//Clips `p` using a plane defined by `n_face` and `pt_face`.
+//`mark_edge` is used as a tag for retrieving the edge or face defining the cutting plane.
+//`sign_taken` changes the orientation of `n_face`.
 static void build_clipped_in_partial(Polyhedron3D* p, Point3D *n_face, Point3D *pt_face, long int mark_edge, int8_t sign_taken){
     Vector_points3D *pts_copy = alloc_empty_vec_pts3D();
     Vector_int *status_face = alloc_empty_vec_int();
@@ -150,6 +160,7 @@ static void build_clipped_in_partial(Polyhedron3D* p, Point3D *n_face, Point3D *
     GrB_free(volumes_in);
 }
 
+//Returns the first point of `i`th face in p.
 static Point3D* first_point_of_ith_face(const Polyhedron3D *p, GrB_Index i){
     Point3D* pt;
     GrB_Index nb_faces, e0, pt_index;
@@ -183,11 +194,17 @@ static Point3D* first_point_of_ith_face(const Polyhedron3D *p, GrB_Index i){
         pt = get_ith_elem_vec_pts3D(p->vertices, pt_index);
     }
 
+    GrB_free(&whole_vec);
+    GrB_free(&nz);
+    GrB_free(&extr_vals);
     return pt;
 }
 
-//    We suppose that clipper.status_face < 0 when the corresponding face is at t==t^n or t==t^{n+1}.
-//    Return: Polyhedron3D
+/// @brief Clips `clipped` using `clipper`.
+/// @details We suppose that `clipper` is convex and that `clipper.status_face < 0` when the corresponding face is at t==t^n or t==t^{n+1}.
+/// @param clipper [IN] a convex polygon
+/// @param clipped [IN] the clipped polygon
+/// @return The result of the clipping (a polyhedron)
 Polyhedron3D* clip3D(const Polyhedron3D *clipper, const Polyhedron3D *clipped){
     Polyhedron3D* clipped_in = new_Polyhedron3D();
     Vector_points3D* normal_vectors = points3D_from_matrix(surfaces_poly3D(clipper));
@@ -211,20 +228,24 @@ Polyhedron3D* clip3D(const Polyhedron3D *clipper, const Polyhedron3D *clipped){
     return clipped_in;
 }
 
-//    Compute the effective area on each face of grid.
-//    The effective area is the area of each face minus the area intersected of initial_p.
-//    The result consists of an ordered list of the faces of `grid` and 
-//    λs, the effective area in a list ordered in the same order.
-//    In λs, we store the effective area and the "complementarity", which is the area of the face minus the effective area.
-//    Return : Vector{Vector{Number}}.
-// *lambdas_vec is allocated with correct size inside the function.
+
+/// @brief Compute the effective area on each face of grid.
+/// @details The effective area is the area of each face of `grid` minus the area intersected with `initial_p`.
+///          The result consists in an ordered list of the faces of `grid` and 
+///          `lambdas`, the effective area in a list ordered in the same order.
+///          In `lambdas`, we store the effective area and the "complementarity", which is the area of the face minus the effective area.
+/// @param grid [IN] Clipper cell
+/// @param initial_p [IN] Clipped polygon
+/// @param lambdas [OUT] effective areas (allocated inside the function)
+/// @param mean_normal [OUT] normal vector of the surface of `initial_p` clipped inside `grid`.
+/// @param is_narrowband [OUT] true if the intersection of `grid` and `initial_p` is not empty, false otherwise.
 void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initial_p, Vector_points3D **lambdas, Point3D *mean_normal, bool *is_narrowband){
     Polyhedron3D *p = clip3D(grid, initial_p);
     GrB_Index nb_edge, nb_cols_vol, nb_cols_fac, i, j;//, e;
     Point3D pt, *nvpi, *lam;
     int8_t pvij_int;
     long int *psfi;
-    double pvij;
+    my_real pvij;
     Vector_points3D *norm_vec_poly;
 
     GrB_Matrix_ncols(&nb_edge, *(grid->faces)); //actually number of edges + 2 faces at times tn and tn+dt
@@ -249,7 +270,7 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
             GrB_Matrix_extractElement(&pvij_int, *(p->volumes), i, j);
             if (pvij_int != 0){
                 if (*psfi<1){
-                    pvij = (double) pvij_int;
+                    pvij = (my_real) pvij_int;
                     inplace_xpay_points3D(mean_normal, pvij, nvpi);
                     *is_narrowband = true;
                 }
@@ -271,216 +292,34 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
     dealloc_Polyhedron3D(p);
 }
 
-//In status_faces, 1 denotes the face created at t^n, 2 the face created at t^{n+1}, and i+2 the face created in time-space from edge i.
-Polyhedron3D* build_space2D_time_cell(const Polygon2D *fn, const Vector_points2D *vs, const double dt, bool split){
-    uint64_t i;
-    int8_t fne_ptind;
-    long int val;
-    Point2D *pt2D, *v;
-    Point3D *pt3D;
-    GrB_Index nb_edges, nb_rows_faces, nb_cols_faces, nb_cols_newedges, nb_cols_newfaces;
-    GrB_Index curr_edge, v_edges_index, curr_face;
-    GrB_Index pt_index1, pt_index2, temp;
-    GrB_Index *I_index, *J_index;
-    GrB_Info infogrb;
-    GrB_Vector ed_i, nz_ei, val_nz_ei;
-    GrB_Matrix emptyNE, emptySW, emptyE_N, emptyE_S;
-    GrB_Matrix *new_edges = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
-    GrB_Matrix *new_faces = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
-    GrB_Matrix *new_volume = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
-    Vector_int *status_faces = (Vector_int*)malloc(sizeof(Vector_int));
-    const uint64_t nb_pts = fn->vertices->size;
-    Vector_points3D *new_vertices = alloc_with_capacity_vec_pts3D(2*nb_pts);
-    
-    pt3D = (Point3D*)malloc(sizeof(Point3D));
-    for (i = 0; i<nb_pts; i++){
-        pt2D = get_ith_elem_vec_pts2D(fn->vertices, i);
-        *pt3D = (Point3D){pt2D->x, pt2D->y, 0.0};
-        set_ith_elem_vec_pts3D(new_vertices, i, pt3D);
-    }
-    for (i = nb_pts; i<2*nb_pts; i++){
-        pt2D = get_ith_elem_vec_pts2D(fn->vertices, i-nb_pts);
-        v = get_ith_elem_vec_pts2D(vs, i-nb_pts);
-        *pt3D = (Point3D){pt2D->x + dt*v->x, pt2D->y + dt*v->y, dt};
-        set_ith_elem_vec_pts3D(new_vertices, i, pt3D);
-    }
-
-    GrB_Matrix_ncols(&nb_edges, *(fn->edges));
-
-    GrB_Matrix_new(&emptyNE, GrB_INT8, nb_pts, nb_edges);
-    GrB_Matrix_new(&emptySW, GrB_INT8, nb_pts, nb_edges);
-    if (split){
-        GrB_Matrix_new(&emptyE_N, GrB_INT8, nb_pts, 2*nb_pts);
-        GrB_Matrix_new(&emptyE_S, GrB_INT8, nb_pts, 2*nb_pts);
-        GrB_Matrix_new(new_edges, GrB_INT8, 2*nb_pts, 2*(nb_edges + nb_pts));
-    } else {
-        GrB_Matrix_new(&emptyE_N, GrB_INT8, nb_pts, nb_pts);
-        GrB_Matrix_new(&emptyE_S, GrB_INT8, nb_pts, nb_pts);
-        GrB_Matrix_new(new_edges, GrB_INT8, 2*nb_pts, 2*nb_edges + nb_pts);
-    }
-    GxB_Matrix_concat(*new_edges, (GrB_Matrix[]){*(fn->edges), emptyNE, emptyE_N, emptySW, *(fn->edges), emptyE_S}, 2, 3, GrB_NULL); //new_edges = [fn->edges, 0, 0; 0, fn->edges, 0]
-
-    GrB_Matrix_ncols(&nb_cols_newedges, *new_edges);
-    GrB_Matrix_ncols(&nb_cols_faces, *(fn->faces));
-    
-
-    if (split){
-        GrB_Matrix_new(new_faces, GrB_INT8, nb_cols_newedges, 2*(nb_cols_faces + nb_edges));
-    } else {
-        GrB_Matrix_new(new_faces, GrB_INT8, nb_cols_newedges, 2*nb_cols_faces + nb_edges);
-    }
-    I_index = (GrB_Index*)malloc(nb_edges*sizeof(GrB_Index));
-    J_index = (GrB_Index*)malloc(nb_cols_faces*sizeof(GrB_Index));
-    for (i = 0; i<nb_edges; i++){
-        I_index[i] = nb_edges + i;
-    }
-    for (i = 0; i<nb_cols_faces; i++){
-        J_index[i] = nb_cols_faces + i;
-    }
-    GxB_Matrix_subassign(*new_faces, GrB_NULL, GrB_NULL, *(fn->faces), I_index, nb_edges, J_index, nb_cols_faces, GrB_NULL);
-    GrB_apply(*new_faces, GrB_NULL, GrB_NULL, GrB_AINV_INT8, *new_faces, GrB_NULL);
-    for (i = 0; i<nb_edges; i++){
-        I_index[i] = i;
-    }
-    for (i = 0; i<nb_cols_faces; i++){
-        J_index[i] = i;
-    }
-    GxB_Matrix_subassign(*new_faces, GrB_NULL, GrB_NULL, *(fn->faces), I_index, nb_edges, J_index, nb_cols_faces, GrB_NULL);
-
-    GrB_Matrix_ncols(&nb_cols_newfaces, *new_faces);
-    status_faces = alloc_with_capacity_vec_int(nb_cols_newfaces);
-    for(i = 0; i < nb_cols_faces; i++){
-        val = 1;
-        set_ith_elem_vec_int(status_faces, i, &val);
-    }
-    for(i = nb_cols_faces; i < 2*nb_cols_faces; i++){
-        val = 2;
-        set_ith_elem_vec_int(status_faces, i, &val);
-    }
-    for(i = 2*nb_cols_faces; i < nb_cols_newfaces; i++){
-        val = 0;
-        set_ith_elem_vec_int(status_faces, i, &val);
-    }
-
-    GrB_Matrix_new(new_volume, GrB_INT8, nb_cols_newfaces, 1);
-    for(i=0; i<nb_edges; i++){
-        infogrb = GrB_Matrix_setElement(*new_volume, -1, i, 0);
-    }
-    for(i=nb_edges; i<nb_cols_newfaces; i++){
-        infogrb = GrB_Matrix_setElement(*new_volume, 1, i, 0);
-    }
-
-    curr_edge = 2*nb_edges;
-    v_edges_index = curr_edge;
-    curr_face = 2*nb_cols_faces;
-
-    for(i=0; i<nb_pts; i++){
-        GrB_Matrix_setElement(*new_edges, -1, i, curr_edge);
-        GrB_Matrix_setElement(*new_edges, 1, i + nb_pts, curr_edge);
-        curr_edge++;
-    }
-
-    //At this point, new_edges has the following organisation :
-    //First nb_edges: original edges of f at t=tn
-    //Following nb_edges: edges of f at t=tn+dt
-    //Following nb_pts: edges linking pt at t=tn and pt at t=tn+dt
-    GrB_Matrix_nrows(&nb_rows_faces, *(fn->faces));
-    infogrb = GrB_Vector_new(&ed_i, GrB_INT8, nb_rows_faces);
-    infogrb = GrB_Vector_new(&nz_ei, GrB_UINT64, nb_rows_faces);
-    infogrb = GrB_Vector_new(&val_nz_ei, GrB_INT8, nb_rows_faces);
-    if (split){ //Each edge in 2D is turned into 2 faces (triangulation)
-        //Now, we create the diagonal edges, and create all faces between t=tn and t=tn+dt
-        for (i=0; i<nb_edges; i++){
-            infogrb = GrB_extract(ed_i, GrB_NULL, GrB_NULL, *(fn->edges), GrB_ALL, 1, i, GrB_NULL); //Get point indices of edge i
-            infogrb = GxB_Vector_extractTuples_Vector(nz_ei, val_nz_ei, ed_i, GrB_NULL);
-
-            infogrb = GrB_Vector_extractElement(&pt_index1, nz_ei, 0);
-            infogrb = GrB_Vector_extractElement(&pt_index2, nz_ei, 1);
-            
-            //GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
-            GrB_Vector_extractElement(&fne_ptind, val_nz_ei, 0);
-            if (fne_ptind > 0){ //pt_index1 should always be the index where the edges starts
-                temp = pt_index1;
-                pt_index1 = pt_index2;
-                pt_index2 = temp;
-            }
-
-            GrB_Matrix_setElement(*new_edges,  1, pt_index2 + nb_pts, curr_edge); //diagonal edge
-            GrB_Matrix_setElement(*new_edges, -1, pt_index1         , curr_edge); //diagonal edge
-
-            GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
-            GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
-            GrB_Matrix_setElement(*new_faces, -1, curr_edge                , curr_face); //diagonal edge
-
-            GrB_Matrix_setElement(*new_faces, -1, i + nb_edges             , curr_face + 1); //edge at time tn+dt
-            GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face + 1); //vertical edge of pt_index1 between t=tn and t=tn+dt
-            GrB_Matrix_setElement(*new_faces,  1, curr_edge                , curr_face + 1); //diagonal edge
-
-            val = 3+i;
-            set_ith_elem_vec_int(status_faces, curr_face    , &val);
-            set_ith_elem_vec_int(status_faces, curr_face + 1, &val);
-
-            GrB_Matrix_extractElement(&fne_ptind, *(fn->faces), i, 0);
-            GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face    , 0);
-            GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face + 1, 0);
-
-            curr_edge += 1;
-            curr_face += 2;
-        }
-    } else {//Each edge in 2D is turned into 1 single face (no triangulation)
-        //Now, we create all faces between t=tn and t=tn+dt
-        for (i=0; i<nb_edges; i++){
-            infogrb = GrB_extract(ed_i, GrB_NULL, GrB_NULL, *(fn->edges), GrB_ALL, 1, i, GrB_NULL); //Get point indices of edge i
-            infogrb = GxB_Vector_extractTuples_Vector(nz_ei, val_nz_ei, ed_i, GrB_NULL);
-
-            infogrb = GrB_Vector_extractElement(&pt_index1, nz_ei, 0);
-            infogrb = GrB_Vector_extractElement(&pt_index2, nz_ei, 1);
-            
-            GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
-            if (fne_ptind > 0){ //pt_index1 should always be the index where the edges starts
-                temp = pt_index1;
-                pt_index1 = pt_index2;
-                pt_index2 = temp;
-            }
-
-            GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
-            GrB_Matrix_setElement(*new_faces, -1, i + nb_edges             , curr_face); //edge at time tn+dt
-            GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
-            GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face); //vertical edge of pt_index1 between t=tn and t=tn+dt
-
-            val = 3+i;
-            set_ith_elem_vec_int(status_faces, curr_face, &val);
-
-            GrB_Matrix_extractElement(&fne_ptind, *(fn->faces), i, 0);
-            GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face, 0);
-
-            curr_edge += 1;
-            curr_face += 1;
-        }
-    }
-
-    return new_Polyhedron3D_vefvs(new_vertices, new_edges, new_faces, new_volume, status_faces);
-}
-
-//    vec_move_solid should be an array of array of size #columns(clipped.faces), 
-//    and each member i of this vector should be of size mini_clipped->vertices->size, 
-//    where mini_clipped = extract_ith_face(clipped, i)
-void compute_lambdas2D(const Polygon2D* grid, const Polygon2D *clipped, const Vector_points2D *vec_move_solid, const double dt, \
+/// @brief Compute the effective areas in `grid` when occupied by `clipped` moving with vectors `vec_move_solid` for time `dt`. 
+/// @details vec_move_solid should be an array of array of size #columns(clipped.faces), 
+///           and each member i of this vector should be of size mini_clipped->vertices->size, 
+///           where mini_clipped = extract_ith_face(clipped, i)
+/// @param grid [IN] non-moving polygon, clipper.
+/// @param clipped3D [IN] moving polygon.
+/// @param dt [IN] time-step
+/// @param lambdas_arr [OUT] Array of effective area for each edge of `grid`. Allocated inside the function.
+/// @param big_lambda_n [OUT] First cell: effective area at time t^n. Second cell: area of grid - effective area. Allocated inside the function.
+/// @param big_lambda_np1 [OUT] First cell: effective area at time t^n+`dt`. Second cell: area of grid - effective area. Allocated inside the function.
+/// @param is_narrowband [OUT] True if the intersection of `grid` and `clipped` is not empty at time t^n or t^n+`dt`, false otherwise.
+void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, const my_real dt, \
                         Array_double **lambdas_arr, Vector_double** big_lambda_n, Vector_double** big_lambda_np1, Point3D *mean_normal, bool *is_narrowband){
     const unsigned int nb_regions = 2;
-    double *val = (double*)malloc(sizeof(double));
-    double nm;
+    my_real *val = (my_real*)malloc(sizeof(my_real));
+    my_real nm;
     Point3D *area, *occupied;
     Vector_points3D *occupied_area;
-    Polygon2D *mini_clipped;
-    Polyhedron3D *clipped3D, *cell3D;
-    long *sfj;
-    const Point2D pt2D = (Point2D){0.,0.};
+    //Polygon2D *mini_clipped;
+    Polyhedron3D *cell3D = NULL;
+    //long *sfj;
     Point3D *pt3D, local_mean_normal, *local_l;
     bool local_narrowband;
-    Vector_points2D *vec_move_grid;
-    Vector_points3D *surfaces;
-    GrB_Index nb_edge, i, j, k, nb_clipped_faces;
+    //Vector_points2D *vec_move_grid;
+    my_real *vec_move_gridx = NULL, *vec_move_gridy = NULL;
+    Vector_points3D *surfaces = NULL;
+    GrB_Index nb_edge, i, j, k;
+    //GrB_Index nb_clipped_faces;
     Vector_points3D *lambdas3D; //TODO : Change this when nb_regions>2
     Array_points3D *local_lambdas;
     
@@ -503,26 +342,24 @@ void compute_lambdas2D(const Polygon2D* grid, const Polygon2D *clipped, const Ve
     }
 
     *is_narrowband = false;
-    vec_move_grid = alloc_with_capacity_vec_pts2D(grid->vertices->size);
-    for (i=0; i<grid->vertices->size; i++){
-        set_ith_elem_vec_pts2D(vec_move_grid, i, &pt2D);
-    }
-    cell3D = build_space2D_time_cell(grid, vec_move_grid, dt, false);
+    vec_move_gridx = calloc(grid->vertices->size, sizeof(my_real));
+    vec_move_gridy = calloc(grid->vertices->size, sizeof(my_real));
+    cell3D = build_space2D_time_cell(grid, vec_move_gridx, vec_move_gridy, grid->vertices->size, dt, false, NULL);
     surfaces = points3D_from_matrix(surfaces_poly3D(cell3D));
 
-    if (clipped->vertices->size>2){
-        GrB_Matrix_ncols(&nb_clipped_faces, *(clipped->faces));
-        for (i=0; i<nb_clipped_faces; i++){
-            mini_clipped = extract_ith_face(clipped, i);
+    if (clipped3D->vertices->size>2){
+        //GrB_Matrix_ncols(&nb_clipped_faces, *(clipped->faces));
+        //for (i=0; i<nb_clipped_faces; i++){
+            //mini_clipped = extract_ith_face(clipped, i);
             k = 0; //should be k = clipped->status_edge[i], or another variable to indicate what region covers face nb i.
-            clipped3D = build_space2D_time_cell(mini_clipped, vec_move_solid + i, dt, true);
-            for (j=0; j<clipped3D->status_face->size; j++){
-                sfj = get_ith_elem_vec_int(clipped3D->status_face, j);
-                if (*sfj > 2)   *sfj = -1;
-            }
+            ////clipped3D = build_space2D_time_cell(mini_clipped, vec_move_solid + i, dt, true);
+            //for (j=0; j<clipped3D->status_face->size; j++){
+            //    sfj = get_ith_elem_vec_int(clipped3D->status_face, j);
+            //    if (*sfj > 2)   *sfj = -1;
+            //}
             
             compute_lambdas2D_time(cell3D, clipped3D, &lambdas3D, &local_mean_normal, &local_narrowband);
-            dealloc_Polyhedron3D(clipped3D);
+            //dealloc_Polyhedron3D(clipped3D);
             //λ, ni, is_na = compute_lambdas(cell3D, clipped3D)
 
             mean_normal->x += local_mean_normal.x;
@@ -543,8 +380,8 @@ void compute_lambdas2D(const Polygon2D* grid, const Polygon2D *clipped, const Ve
                 local_l->y += pt3D->y;
                 local_l->t += pt3D->t;
             }
-            dealloc_Polygon2D(mini_clipped);
-        } 
+            //dealloc_Polygon2D(mini_clipped);
+        //} 
 
         i = 0;
         area = get_ith_elem_vec_pts3D(surfaces, i);
@@ -605,176 +442,8 @@ void compute_lambdas2D(const Polygon2D* grid, const Polygon2D *clipped, const Ve
     }
 
     dealloc_Polyhedron3D(cell3D);
-    dealloc_vec_pts2D(vec_move_grid);
     dealloc_vec_pts3D(surfaces);
+    if (vec_move_gridx) free(vec_move_gridx);
+    if (vec_move_gridy) free(vec_move_gridy);
+    if (val) free(val);
 }
-
-/*
-//Fusion of cells with "too small" fluid region. Searches for neighbour cells with a big enough ratio of fluid and fuses them.\n
-//Returns two arrays: \n
-//    - one that gives, for each cell, the cell with which it will fuse \n
-//    - one that tells the status of the cell with one of the flag in FusingCellType \n
-//Returns: Vector{Int}, Vector{FusingCellType}
-function fuse_cells(grid::Grid2D, threshold::Real, is_narrowband::Vector{Bool}, λ_per_edge::Matrix{<:Number}, 
-                    Λn::Array{Number}, Λnp1::Array{Number})
-    target_cells = Vector{Vector{Int}}(undef, size(grid.p.faces, 2))
-    cell_type = Vector{FusingCellType}(undef, size(grid.p.faces, 2))
-
-    narrowBand1 = [((0<Λn[i, 1]/grid.areas[i]<threshold)||(0<Λnp1[i,1]/grid.areas[i]<threshold))&&is_narrowband[i] for i in axes(grid.p.faces, 2)]
-    narrowBand2 = [((0<Λn[i, 2]/grid.areas[i]<threshold)||(0<Λnp1[i,2]/grid.areas[i]<threshold))&&is_narrowband[i] for i in axes(grid.p.faces, 2)]
-
-    edge_indices = rowvals(grid.p.faces)
-    cells_to_be_merged1 = Set{Int}()
-    cells_to_be_merged2 = Set{Int}()
-    for f in axes(grid.p.faces, 2)
-        if narrowBand1[f]
-            push!(cells_to_be_merged1, f)
-            cell_type[f] = PROBLEMATIC_UNSOLVED
-            target_cells[f] = Vector{Int}()
-            krange = nzrange(grid.p.faces, f)
-            for e in edge_indices[krange]
-                if (λ_per_edge[e, 1]>0.0)
-                    faces = adjacency_edge(grid, e)
-                    if !isnothing(faces) && faces[2]>0
-                        adjf = faces[1]
-                        if adjf == f
-                            adjf = faces[2]
-                        end
-                        if (Λn[adjf, 1]>0.0) || (Λnp1[adjf, 1]>0.0)
-                            push!(target_cells[f], adjf)
-                        end
-                    end
-                end 
-            end
-        elseif narrowBand2[f]
-            push!(cells_to_be_merged2, f)
-            cell_type[f] = PROBLEMATIC_UNSOLVED
-            target_cells[f] = Vector{Int}()
-            krange = nzrange(grid.p.faces, f)
-            for e in edge_indices[krange]
-                if (λ_per_edge[e,2]>0.0)
-                    faces = adjacency_edge(grid, e)
-                    if !isnothing(faces) && faces[2]>0
-                        adjf = faces[1]
-                        if adjf == f
-                            adjf = faces[2]
-                        end
-                        if (Λn[adjf,2]>0.0) || (Λnp1[adjf,2]>0.0)
-                            push!(target_cells[f], adjf)
-                        end
-                    end
-                end 
-            end
-        else
-            cell_type[f] = NOT_FUSED
-            target_cells[f] = [f]
-        end
-    end
-    
-    global_fusion_happened = true 
-    while global_fusion_happened
-        global_fusion_happened = false
-
-        fusion_happened = true
-        while fusion_happened
-            fusion_happened = false
-            copy_to_be_merged = copy(cells_to_be_merged1)
-            for c in copy_to_be_merged
-                targ_c = [tc for tc in target_cells[c] if (cell_type[tc]==NOT_FUSED || cell_type[tc]==FUSED)]
-                if !isempty(targ_c)
-                    Λs = [Λn[f,1]/grid.areas[f] for f in targ_c]
-                    i = argmax(Λs)
-                    target_cells[c] = [targ_c[i]]
-                    delete!(cells_to_be_merged1, c)
-                    cell_type[c] = FUSED
-                    cell_type[targ_c[i]] = FUSED
-                    fusion_happened = true
-                    global_fusion_happened = true
-                end
-            end
-        end
-
-        fusion_happened = true
-        while fusion_happened
-            fusion_happened = false
-            copy_to_be_merged = copy(cells_to_be_merged2)
-            for c in copy_to_be_merged
-                targ_c = [tc for tc in target_cells[c] if (cell_type[tc]==NOT_FUSED || cell_type[tc]==FUSED)]
-                if !isempty(targ_c)
-                    Λs = [Λn[f,2]/grid.areas[f] for f in targ_c]
-                    i = argmax(Λs)
-                    target_cells[c] = [targ_c[i]]
-                    delete!(cells_to_be_merged2, c)
-                    cell_type[c] = FUSED
-                    cell_type[targ_c[i]] = FUSED
-                    fusion_happened = true
-                    global_fusion_happened = true
-                end
-            end
-        end
-    end
-
-    while !isempty(cells_to_be_merged1) //Problem : some cells can't be merged with a cell big enough.
-        rand_cell = rand(cells_to_be_merged1)
-        target_cells[rand_cell] = [rand_cell]
-        cell_type[rand_cell] = PROBLEMATIC
-        delete!(cells_to_be_merged1, rand_cell)
-        fusion_happened = true
-        while fusion_happened
-            fusion_happened = false
-            copy_to_be_merged = copy(cells_to_be_merged1)
-            for c in copy_to_be_merged
-                targ_c = [tc for tc in target_cells[c] if (cell_type[tc]==PROBLEMATIC)]
-                if !isempty(targ_c)
-                    Λs = [Λn[f,1]/grid.areas[f] for f in targ_c]
-                    i = argmax(Λs)
-                    target_cells[c] = [targ_c[i]]
-                    delete!(cells_to_be_merged1, c)
-                    cell_type[c] = PROBLEMATIC
-                    fusion_happened = true
-                end
-            end
-        end
-    end
-    while !isempty(cells_to_be_merged2) //Problem : some cells can't be merged with a cell big enough.
-        rand_cell = rand(cells_to_be_merged2)
-        target_cells[rand_cell] = [rand_cell]
-        cell_type[rand_cell] = PROBLEMATIC
-        delete!(cells_to_be_merged2, rand_cell)
-        fusion_happened = true
-        while fusion_happened
-            fusion_happened = false
-            copy_to_be_merged = copy(cells_to_be_merged2)
-            for c in copy_to_be_merged
-                targ_c = [tc for tc in target_cells[c] if (cell_type[tc]==PROBLEMATIC)]
-                if !isempty(targ_c)
-                    Λs = [Λn[f,2]/grid.areas[f] for f in targ_c]
-                    i = argmax(Λs)
-                    target_cells[c] = [targ_c[i]]
-                    delete!(cells_to_be_merged2, c)
-                    cell_type[c] = PROBLEMATIC
-                    fusion_happened = true
-                end
-            end
-        end
-    end
-
-    final_target_cells = Vector{Int}(undef, size(grid.p.faces, 2))
-    for f in axes(grid.p.faces, 2)
-        final_target_cells[f] = target_cells[f][1]
-    end
-
-    for f in axes(grid.p.faces, 2)
-        ftc = final_target_cells[f]
-        while ftc != final_target_cells[ftc]
-            ftc = final_target_cells[ftc]
-        end
-        final_target_cells[f] = ftc
-        if f == ftc && cell_type[f] == FUSED
-            cell_type[f] = TARGET_FUSED
-        end
-    end
-
-    return final_target_cells, cell_type
-end
-*/

@@ -8,10 +8,10 @@
 //----------------------------------------------------------------------------------------
 Array_points2D* alloc_empty_arr_pts2D(){
     Array_points2D* v = (Array_points2D*)malloc(sizeof(Array_points2D));
-    v->points = NULL;
+    v->points = (Point2D*)malloc(sizeof(Point2D));
     v->nrows = 0;
     v->ncols = 0;
-    v->capacity = 0;
+    v->capacity = 1;
 
     return v;
 }
@@ -127,10 +127,10 @@ void print_arr_pt2D(const Array_points2D *p){
 //----------------------------------------------------------------------------------------
 Array_points3D* alloc_empty_arr_pts3D(){
     Array_points3D* v = (Array_points3D*)malloc(sizeof(Array_points3D));
-    v->points = NULL;
+    v->points = (Point3D*)malloc(sizeof(Point3D));
     v->nrows = 0;
     v->ncols = 0;
-    v->capacity = 0;
+    v->capacity = 1;
 
     return v;
 }
@@ -241,10 +241,10 @@ void print_arr_pt3D(const Array_points3D *p){
 //----------------------------------------------------------------------------------------
 Array_points4D* alloc_empty_arr_pts4D(){
     Array_points4D* v = (Array_points4D*)malloc(sizeof(Array_points4D));
-    v->points = NULL;
+    v->points = (Point4D*)malloc(sizeof(Point4D));
     v->nrows = 0;
     v->ncols = 0;
-    v->capacity = 0;
+    v->capacity = 1;
 
     return v;
 }

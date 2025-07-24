@@ -19,6 +19,7 @@ Point2D* get_ith_elem_vec_pts2D(const Vector_points2D* v, uint64_t i);
 void set_ith_elem_vec_pts2D(Vector_points2D* v, uint64_t i, const Point2D* p);
 void copy_vec_pts2D(const Vector_points2D* src, Vector_points2D* dest);
 void print_vec_pt2D(const Vector_points2D p);
+Vector_points2D* cat_vec_pts2D(const Vector_points2D* v1, const Vector_points2D* v2);
 
 typedef struct {
     Point3D* points;
@@ -35,6 +36,7 @@ Point3D* get_ith_elem_vec_pts3D(const Vector_points3D* v, uint64_t i);
 void set_ith_elem_vec_pts3D(Vector_points3D* v, uint64_t i, const Point3D* p);
 void copy_vec_pts3D(const Vector_points3D* src, Vector_points3D* dest);
 void print_vec_pt3D(const Vector_points3D p);
+Vector_points3D* cat_vec_pts3D(const Vector_points3D* v1, const Vector_points3D* v2);
 
 typedef struct {
     Point4D* points;
@@ -51,6 +53,7 @@ Point4D* get_ith_elem_vec_pts4D(const Vector_points4D* v, uint64_t i);
 void set_ith_elem_vec_pts4D(Vector_points4D* v, uint64_t i, const Point4D* p);
 void copy_vec_pts4D(const Vector_points4D* src, Vector_points4D* dest);
 void print_vec_pt4D(const Vector_points4D p);
+Vector_points4D* cat_vec_pts4D(const Vector_points4D* v1, const Vector_points4D* v2);
 
 
 #endif

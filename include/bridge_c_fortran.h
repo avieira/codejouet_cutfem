@@ -1,25 +1,15 @@
 #ifndef BRIDGE_C_FORTRAN_H
 #define BRIDGE_C_FORTRAN_H
 
+#include "my_real.h"
 #include "Polygon2D.h"
 
 
 void launch_grb_();
 void end_grb_();
 
-/// @brief Generates a polygon with given vertices (x_v, y_v) composed of rectangular faces.
-/// @details The polygon is composed of rectangles and has (n_x-1)*(n_y-1) faces, forming a grid of rectangles.
-///          If n_x==2 and n_y==2, it produces a single rectangle, with the edges sorted in the (W, S, E, N) order, meaning
-///          1. edge((x_v(1), y_v(1))->(x_v(1), y_v(2)))
-///          2. edge((x_v(1), y_v(1))->(x_v(2), y_v(1)))
-///          3. edge((x_v(2), y_v(1))->(x_v(2), y_v(2)))
-///          4. edge((x_v(1), y_v(2))->(x_v(2), y_v(2)))
-/// @param x_v 
-/// @param n_x 
-/// @param y_v 
-/// @param n_y 
-/// @return 
-Polygon2D* polygon2d_from_vertices_fortran_(const double* x_v, const long int *n_x, const double* y_v, const long int *n_y);
+void build_grid_from_points_fortran_(const my_real* x_v, const my_real* y_v, const long long int *signed_nb_pts);
+void build_clipped_from_pts_fortran_(const my_real* x_v, const my_real* y_v, const long long int *signed_nb_pts);
 
 /// @brief 
 /// @param grid 
@@ -36,15 +26,18 @@ Polygon2D* polygon2d_from_vertices_fortran_(const double* x_v, const long int *n
 /// @param size_big_lambda_np1 
 /// @param mean_normal 
 /// @param is_narrowband 
-void compute_lambdas2d_fortran_(const Polygon2D** grid, const Polygon2D **clipped, const Point2D *vec_move_solid, const int64_t *size_vec_move_solid, const double *dt, \
-                        double *ptr_lambdas_arr,    \
-                        double *ptr_big_lambda_n,   \
-                        double *ptr_big_lambda_np1, \
+void compute_lambdas2d_fortran_(const my_real *dt, \
+                        my_real *ptr_lambdas_arr,    \
+                        my_real *ptr_big_lambda_n,   \
+                        my_real *ptr_big_lambda_np1, \
                         Point3D *mean_normal, bool *is_narrowband);
-GrB_Info grb_matrix_new_fp_fortran_(GrB_Matrix** M, int64_t *signed_nrows, int64_t *signed_ncols);
-GrB_Info grb_matrix_setelement_(GrB_Matrix** M, int64_t *signed_irows, int64_t *signed_jcols, my_real* val);
-GrB_Info grb_matrix_getelement_(GrB_Matrix** M, int64_t *signed_irows, int64_t *signed_jcols, my_real* val);
-void polygon2d_free_fortran_(Polygon2D** p);
-long polygon2d_get_nb_edges_(const Polygon2D** p);
+void nb_pts_clipped_fortran_(long long int* signed_nb_pts_solid);
+void nb_edge_clipped_fortran_(long long int* signed_nb_edges_solid);
+void compute_normals_clipped_fortran_(my_real* normalVecx, my_real* normalVecy, long long* signed_nb_pts, \
+                                        my_real* normalVecEdgex, my_real* normalVecEdgey, long long* signed_nb_edges, \
+                                        my_real* min_pos_Se);
+void smooth_vel_clipped_fortran_(my_real* vec_move_clippedx, my_real* vec_move_clippedy, my_real* min_pos_Se, my_real *dt);
+void get_clipped_ith_vertex_fortran_(long long int *k, Point2D *pt, long long int *signed_eR, long long int *signed_eL);
+void update_clipped_fortran_(const my_real* vec_move_clippedy, const my_real* vec_move_clippedz, const my_real* dt, const my_real *dx);
 
 #endif

@@ -3,13 +3,11 @@
 #include <string.h>
 #include <stdio.h>
 
+/*--------------------------------------------------------
+                LONG INT
+--------------------------------------------------------*/
 Vector_int* alloc_empty_vec_int(){
-    Vector_int* v = (Vector_int*)malloc(sizeof(Vector_int));
-    v->data = NULL;
-    v->size = 0;
-    v->capacity = 0;
-
-    return v;
+    return alloc_with_capacity_vec_int(1);
 }
 
 Vector_int* alloc_with_capacity_vec_int(uint64_t size){
@@ -55,8 +53,10 @@ void push_back_vec_int(Vector_int* v, const long int* point){
 
 void dealloc_vec_int(Vector_int* v){
     if(v!=NULL){
-        free(v->data);
-        v->data = NULL;
+        if(v->data){
+            free(v->data);
+            v->data = NULL;
+        }
         v->capacity = 0;
         v->size = 0;
     }
@@ -73,7 +73,7 @@ long int* get_ith_elem_vec_int(const Vector_int* v, uint64_t i){
     }
 }
 
-void set_ith_elem_vec_int(Vector_int* v, uint64_t i, long int* d){
+void set_ith_elem_vec_int(Vector_int* v, uint64_t i, const long int* d){
     while(i >= v->capacity) double_capacity_vec_int(v);
     if (i >= v->size) v->size = i+1;
     
@@ -111,14 +111,21 @@ void print_vec_int(const Vector_int* v){
     printf("%ld]\n", *vi);
 }
 
-Vector_uint* alloc_empty_vec_uint(){
-    Vector_uint* v = (Vector_uint*)malloc(sizeof(Vector_uint));
-    v->data = NULL;
-    v->size = 0;
-    v->capacity = 0;
-
-    return v;
+Vector_int* cat_vec_int(const Vector_int* v1, const Vector_int* v2){
+    Vector_int *catv = alloc_with_capacity_vec_int(v1->size + v2->size);
+    memcpy(catv->data, v1->data, v1->size*sizeof(long int));
+    memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(long int));
+    return catv;
 }
+
+/*--------------------------------------------------------
+                UNSIGNED LONG INT
+--------------------------------------------------------*/
+
+Vector_uint* alloc_empty_vec_uint(){
+    return alloc_with_capacity_vec_uint(1);
+}
+
 
 Vector_uint* alloc_with_capacity_vec_uint(uint64_t size){
     Vector_uint* v = (Vector_uint*)malloc(sizeof(Vector_uint));
@@ -163,8 +170,10 @@ void push_back_vec_uint(Vector_uint* v, const long unsigned int* point){
 
 void dealloc_vec_uint(Vector_uint* v){
     if(v!=NULL){
-        free(v->data);
-        v->data = NULL;
+        if(v->data){
+            free(v->data);
+            v->data = NULL;
+        }
         v->capacity = 0;
         v->size = 0;
     }
@@ -217,4 +226,166 @@ void print_vec_uint(const Vector_uint* v){
     }
     vi = get_ith_elem_vec_uint(v, v->size-1);
     printf("%ld]\n", *vi);
+}
+
+Vector_uint* cat_vec_uint(const Vector_uint* v1, const Vector_uint* v2){
+    Vector_uint *catv = alloc_with_capacity_vec_uint(v1->size + v2->size);
+    memcpy(catv->data, v1->data, v1->size*sizeof(unsigned long int));
+    memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(unsigned long int));
+    return catv;
+}
+
+/*--------------------------------------------------------
+                INT 64 BITS
+--------------------------------------------------------*/
+
+Vector_int64* alloc_empty_vec_int64(){
+    return alloc_with_capacity_vec_int64(1);
+}
+
+Vector_int64* alloc_with_capacity_vec_int64(uint64_t size){
+    Vector_int64* v = (Vector_int64*)malloc(sizeof(Vector_int64));
+    v->data = (int64_t*)malloc(size*sizeof(int64_t));
+    v->size = 0;
+    v->capacity = size;
+
+    return v;
+}
+
+Vector_int64* alloc_with_init_vec_int64(const int64_t* data, uint64_t size){
+    Vector_int64* v = (Vector_int64*)malloc(sizeof(Vector_int64));
+    v->data = (int64_t*)malloc(size*sizeof(int64_t));
+    memcpy(v->data, data, size*sizeof(int64_t));
+    v->size = size;
+    v->capacity = size;
+
+    return v;
+}
+
+void double_capacity_vec_int64(Vector_int64* v){
+    v->capacity *= 2;
+    v->data = (int64_t*) realloc(v->data, v->capacity*sizeof(int64_t));
+}
+
+void push_back_vec_int64(Vector_int64* v, const int64_t* point){
+    if ((v->size == 0) || (v->data == NULL)){
+        free(v->data);
+        *v = *alloc_with_init_vec_int64(point, 1);
+    }
+    else if (v->size >= v->capacity)
+    {
+        double_capacity_vec_int64(v);
+        v->data[v->size] = *point;
+        v->size += 1;
+    }
+    else {
+        v->data[v->size] = *point;
+        v->size += 1;
+    }
+}
+
+void push_back_unique_vec_int64(Vector_int64* v, const int64_t* point){
+    uint64_t i;
+    int8_t isin;
+
+    if ((v->size == 0) || (v->data == NULL)){
+        free(v->data);
+        *v = *alloc_with_init_vec_int64(point, 1);
+        return;
+    }
+    if (v->size >= v->capacity)
+    {
+        double_capacity_vec_int64(v);
+    }
+
+    isin = 0;
+    for(i = 0; i<v->size; i++){
+        if (v->data[i] == *point){
+            isin = 1;
+            break;
+        }
+    }
+    if (!isin) {
+        v->data[v->size] = *point;
+        v->size += 1;
+    }
+}
+
+void dealloc_vec_int64(Vector_int64* v){
+    if(v!=NULL){
+        if(v->data){
+            free(v->data);
+            v->data = NULL;
+        }
+        v->capacity = 0;
+        v->size = 0;
+    }
+}
+
+int64_t* get_ith_elem_vec_int64(const Vector_int64* v, uint64_t i){
+    int64_t* p;
+    if (i<v->size) {
+        return v->data + i;
+    } else {
+        p = (int64_t*) malloc(sizeof(int64_t));
+        *p = 0.0/0.0;
+        return p;
+    }
+}
+
+void set_ith_elem_vec_int64(Vector_int64* v, uint64_t i, int64_t* d){
+    while(i >= v->capacity) double_capacity_vec_int64(v);
+    if (i >= v->size) v->size = i+1;
+    
+    v->data[i] = *d;
+}
+
+void copy_vec_int64(const Vector_int64* src, Vector_int64* dest){
+    if (src == NULL){
+        if (dest != NULL) {
+            free(dest->data);
+            dest->size = 0;
+            dest->capacity = 0;
+        }
+    } else {
+        if (dest != NULL){
+            free(dest->data);
+            dest->data = (int64_t*)malloc(src->capacity*sizeof(int64_t));
+            memcpy(dest->data, src->data, src->size*sizeof(int64_t));
+            dest->size = src->size;
+            dest->capacity = src->capacity;
+        }
+    }
+}
+
+void print_vec_int64(const Vector_int64* v){
+    uint64_t i;
+    int64_t* vi;
+
+    printf("v = [");
+    for (i = 0; i<v->size-1; i++){
+        vi = get_ith_elem_vec_int64(v, i);
+        printf("%ld, ", *vi);
+    }
+    vi = get_ith_elem_vec_int64(v, v->size-1);
+    printf("%ld]\n", *vi);
+}
+
+static int compare_int64( const void* a, const void* b)
+{
+   int64_t int_a = * ( (int64_t*) a );
+   int64_t int_b = * ( (int64_t*) b );
+
+   // an easy expression for comparing
+   return (int_a > int_b) - (int_a < int_b);
+}
+void sort_vec_int64(Vector_int64* v){
+    qsort(v->data, v->size, sizeof(int64_t), compare_int64);
+}
+
+Vector_int64* cat_vec_int64(const Vector_int64* v1, const Vector_int64* v2){
+    Vector_int64 *catv = alloc_with_capacity_vec_int64(v1->size + v2->size);
+    memcpy(catv->data, v1->data, v1->size*sizeof(int64_t));
+    memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(int64_t));
+    return catv;
 }

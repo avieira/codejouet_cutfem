@@ -1,4 +1,6 @@
 #include "general_clipping.h"
+#include "my_real.h"
+
 void cut_edges3D(const Polyhedron3D* p, const Point3D* normal, const Point3D* pt, int8_t sign_taken, Vector_points3D* pts_copy, GrB_Matrix* new_edges_in){
         GrB_Index i;
         Point3D *v, *x1, *x2, newPoint;
@@ -13,7 +15,7 @@ void cut_edges3D(const Polyhedron3D* p, const Point3D* normal, const Point3D* pt
         GrB_Index size_e, size_v, ind_2;
         unsigned int nb_cut_edges, countPoint;
         int64_t be_i;
-        double* distances = (double*)malloc(size*sizeof(double));
+        my_real* distances = (my_real*)malloc(size*sizeof(my_real));
         bool dist_i;
 
         copy_vec_pts3D(p->vertices, pts_copy);
@@ -92,12 +94,20 @@ void cut_edges3D(const Polyhedron3D* p, const Point3D* normal, const Point3D* pt
             }
             infogrb = GrB_Matrix_new(new_edges_in, GrB_INT8, size + nb_cut_edges, size_e);
             GxB_Matrix_concat(*new_edges_in, (GrB_Matrix[]){edges_in, addPoints}, 2, 1, GrB_NULL);
+            GrB_free(&addPoints);
         } else {
             infogrb = GrB_Matrix_new(new_edges_in, GrB_INT8, size, size_e);
             GrB_Matrix_dup(new_edges_in, edges_in);
         }
 
         free(distances);
+        GrB_free(&pts_in);
+        GrB_free(&pts_in_m_ones);
+        GrB_free(&edges_in);
+        GrB_free(&broken_edges);
+        GrB_free(&temp_v);
+        GrB_free(&nz_be);
+        GrB_free(&vals_be);
 }
 
 //[INOUT] cells_in 
@@ -202,6 +212,10 @@ void close_cells(GrB_Matrix *cells_in, const GrB_Matrix *supercells, Vector_int 
             infogrb = GrB_Matrix_new(supercells_in, GrB_INT8,  size_v + nb_open_supercells, size_e);
             infogrb = GxB_Matrix_concat(*supercells_in, (GrB_Matrix[]){temp_tab, addCells}, 2, 1, GrB_NULL); //supercells_in = [supercells_in ; addCells]
 
+            GrB_free(&addCells);
+            GrB_free(&newCells);
+            GrB_free(&nz_osi);
+            GrB_free(&vals_osi);
         } else {
             GrB_Matrix_dup(supercells_in, *supercells);
         }
@@ -214,10 +228,19 @@ void close_cells(GrB_Matrix *cells_in, const GrB_Matrix *supercells, Vector_int 
 
         //free(I_range);
         //free(J_range);
+        GrB_free(&temp_tab);
+        GrB_free(&in_m_ones);
+        GrB_free(&new_cells_in);
+        GrB_free(&subcells_supercells_in);
+        GrB_free(&abs_subcells_supercells_in);
+        GrB_free(&temp_v);
+        GrB_free(&clipped_in_cells);
+        GrB_free(&sum_abs);
+        GrB_free(&open_supercells_in);
 }
 
 typedef struct {
-    double* v;
+    my_real* v;
     unsigned int n;
 } form_struct;
 
@@ -225,21 +248,21 @@ typedef struct {
 //    return (form_struct){NULL, 0};
 //}
 //    
-//static form_struct new_form_struct_init(double* v, int n){
+//static form_struct new_form_struct_init(my_real* v, int n){
 //    return (form_struct){v, n};
 //}
 
 //Compute 2-forms of two vectors p1 and p2, depending on ambient dimension
 static form_struct twoform2D(Point2D p1, Point2D p2){
-    return (form_struct){(double[]){p1.x*p2.y - p2.x*p1.y}, 1};
+    return (form_struct){(my_real[]){p1.x*p2.y - p2.x*p1.y}, 1};
 }
 
 static form_struct twoform3D(Point3D p1, Point3D p2){
-    return (form_struct){(double[]){p1.y*p2.t - p2.y*p1.t, p1.t*p2.x - p2.t*p1.x, p1.x*p2.y - p2.x*p1.y}, 3};
+    return (form_struct){(my_real[]){p1.y*p2.t - p2.y*p1.t, p1.t*p2.x - p2.t*p1.x, p1.x*p2.y - p2.x*p1.y}, 3};
 }
 
 static form_struct twoform4D(Point4D p1, Point4D p2){
-    double vals[] = {p1.x*p2.y - p2.y*p1.x, 
+    my_real vals[] = {p1.x*p2.y - p2.y*p1.x, 
                      p1.x*p2.z - p2.z*p1.x, 
                      p1.x*p2.t - p2.x*p1.t,
                      p1.y*p2.z - p2.y*p1.z, 
@@ -251,34 +274,34 @@ static form_struct twoform4D(Point4D p1, Point4D p2){
 //Compute 3-forms of a 2-form S and a vector p, depending on ambient dimension
 static form_struct threeform3D(Point3D p, form_struct S){
     if (S.n != 3)
-        return (form_struct){(double[]){0./0.}, 0};
+        return (form_struct){(my_real[]){0./0.}, 0};
     else{
-        double val[] = {S.v[0]*p.x + S.v[1]*p.y + S.v[2]*p.t};
+        my_real val[] = {S.v[0]*p.x + S.v[1]*p.y + S.v[2]*p.t};
         return (form_struct){val, 1};
     }
 }
 
 static form_struct threeform3D_vec(Point3D p, GrB_Vector S){
     GrB_Index size_S;    
-    double Sv0, Sv1, Sv2;
+    my_real Sv0, Sv1, Sv2;
 
     GrB_Vector_size(&size_S, S);
     if (size_S != 3)
-        return (form_struct){(double[]){0./0.}, 0};
+        return (form_struct){(my_real[]){0./0.}, 0};
     else{
         GrB_Vector_extractElement(&Sv0, S, 0);
         GrB_Vector_extractElement(&Sv1, S, 1);
         GrB_Vector_extractElement(&Sv2, S, 2);
-        double val[] = {Sv0*p.x + Sv1*p.y + Sv2*p.t};
+        my_real val[] = {Sv0*p.x + Sv1*p.y + Sv2*p.t};
         return (form_struct){val, 1};
     }
 }
 
 static form_struct threeform4D(Point4D p, form_struct S){
     if (S.n!=6)
-        return (form_struct){(double[]){0./0.}, 0};
+        return (form_struct){(my_real[]){0./0.}, 0};
     else{
-        double vals[] = {p.y*S.v[6] - p.z*S.v[5] + p.t*S.v[4], 
+        my_real vals[] = {p.y*S.v[6] - p.z*S.v[5] + p.t*S.v[4], 
                         -p.x*S.v[6] + p.z*S.v[3] - p.t*S.v[2], 
                          p.x*S.v[5] - p.y*S.v[3] + p.t*S.v[1], 
                          -p.x*S.v[4] + p.y*S.v[2] - p.z*S.v[1]};
@@ -289,9 +312,9 @@ static form_struct threeform4D(Point4D p, form_struct S){
 //Compute 4-forms of a 3-form V and a vector p, depending on ambient dimension
 static form_struct fourform4D(Point4D p, form_struct V){
     if (V.n != 4)
-        return (form_struct){(double[]){0./0.}, 0};
+        return (form_struct){(my_real[]){0./0.}, 0};
     else{
-        double val[] = {V.v[0]*p.x + V.v[1]*p.y + V.v[2]*p.z + V.v[3]*p.t};
+        my_real val[] = {V.v[0]*p.x + V.v[1]*p.y + V.v[2]*p.z + V.v[3]*p.t};
         return (form_struct){val, 1};
     }
 }
@@ -319,7 +342,7 @@ static GrB_Matrix vector_pt3D_to_matrix(const Vector_points3D* vertices){
     GrB_Matrix_new(&mat_vert, GrB_FP64, 3, vertices->size);
     for (i=0; i<vertices->size; i++){
         pt = get_ith_elem_vec_pts3D(vertices, i);
-        //GrB_Col_assign(mat_vert, GrB_NULL, GrB_NULL, (double[]){pt->x, pt->y, pt->t}, GrB_ALL, 3, i, GrB_NULL);
+        //GrB_Col_assign(mat_vert, GrB_NULL, GrB_NULL, (my_real[]){pt->x, pt->y, pt->t}, GrB_ALL, 3, i, GrB_NULL);
         GrB_Matrix_setElement(mat_vert, pt->x, 0, i);
         GrB_Matrix_setElement(mat_vert, pt->y, 1, i);
         GrB_Matrix_setElement(mat_vert, pt->t, 2, i);
@@ -348,6 +371,9 @@ Vector_points2D* points2D_from_matrix(const GrB_Matrix m_pts){
     } else {
         res = NULL;
     }
+
+    GrB_free(&m_pt);
+
     return res;
 }
 
@@ -376,6 +402,9 @@ Vector_points3D* points3D_from_matrix(const GrB_Matrix m_pts){
     } else {
         res = NULL;
     }
+
+    GrB_free(&m_pt);
+
     return res;
 }
 
@@ -401,6 +430,9 @@ Vector_points4D* points4D_from_matrix(const GrB_Matrix m_pts){
     } else {
         res = NULL;
     }
+
+    GrB_free(&m_pt);
+
     return res;
 }
 
@@ -415,6 +447,9 @@ static Vector_points2D* compute_length_edges2D(const GrB_Matrix* edges, const Ve
     GrB_mxm(length_edges, GrB_NULL, GrB_NULL, GrB_PLUS_TIMES_SEMIRING_FP64, mat_vert, *edges, GrB_NULL);
     le_as_pts = points2D_from_matrix(length_edges);
 
+    GrB_free(&mat_vert);
+    GrB_free(&length_edges);
+
     return le_as_pts;
 }
 
@@ -428,7 +463,7 @@ static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_M
     GrB_Vector fj, ee0;
     GrB_Vector nz_fj, nz_e0;
     GrB_Vector extr_vals_fj, extr_vals_ee0;
-    double newval;
+    my_real newval;
     Point2D *x0, *xe, *len_ei;
     GxB_Iterator iterator;
     form_struct tf;
@@ -436,7 +471,7 @@ static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_M
     GrB_Index nb_edges;
     const uint64_t nb_pts = points->size;
 
-    GxB_Iterator_new (&iterator) ;
+    GxB_Iterator_new(&iterator) ;
 
     infogrb = GrB_Matrix_ncols(&nf, *faces);
     infogrb = GrB_Matrix_ncols(&nb_edges, *edges);
@@ -462,7 +497,7 @@ static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_M
             infogrb = GxB_Vector_extractTuples_Vector(nz_e0, extr_vals_ee0, ee0, GrB_NULL);
             infogrb = GrB_Vector_size(&size_nze0, nz_e0);
             infoit = GxB_Vector_Iterator_next (iterator) ; //Move on to next edge in face
-            while ((size_nze0 == 0) && (infoit != GxB_EXHAUSTED)) {//In case the first edge is empty: check untile you find one not empty
+            while ((size_nze0 == 0) && (infoit != GxB_EXHAUSTED)) {//In case the first edge is empty: check until you find one not empty
                 e0 = GxB_Iterator_get_UINT64(iterator);//Index of first edge in face j
                 infogrb = GrB_extract(ee0, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, e0, GrB_NULL); //Point indices of first edge of face j
                 infogrb = GxB_Vector_extractTuples_Vector(nz_e0, extr_vals_ee0, ee0, GrB_NULL);
@@ -503,6 +538,12 @@ static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_M
 
     GrB_free(&iterator);
     dealloc_vec_pts2D(length_edges);
+    GrB_free(&fj);
+    GrB_free(&ee0);
+    GrB_free(&nz_fj);
+    GrB_free(&nz_e0);
+    GrB_free(&extr_vals_fj);
+    GrB_free(&extr_vals_ee0);
 
     return surfaces;
 }
@@ -518,6 +559,9 @@ static Vector_points3D* compute_length_edges3D(const GrB_Matrix* edges, const Ve
     GrB_Matrix_new(&length_edges, GrB_FP64, 3, nbcols);
     GrB_mxm(length_edges, GrB_NULL, GrB_NULL, GrB_PLUS_TIMES_SEMIRING_FP64, mat_vert, *edges, GrB_NULL);
     le_as_pts = points3D_from_matrix(length_edges);
+
+    GrB_free(&mat_vert);
+    GrB_free(&length_edges);
 
     return le_as_pts;
 }
@@ -596,6 +640,13 @@ static GrB_Matrix surfaces_poly3D_pef(const Vector_points3D* points, const GrB_M
     }
 
     dealloc_vec_pts3D(length_edges);
+    GrB_free(&fj);
+    GrB_free(&ee0);
+    GrB_free(&nz_fj);
+    GrB_free(&nz_e0);
+    GrB_free(&extr_vals_fj);
+    GrB_free(&extr_vals_ee0);
+    GrB_free(&newcol);
 
     return surfaces;
 }
@@ -614,7 +665,7 @@ static GrB_Vector volumes_poly3D_pefv(const Vector_points3D* points, const GrB_M
     GrB_Index i, j, k, p0, p;
     Point3D *x0, *xe;
     int8_t sign;
-    double newval = 0;
+    my_real newval = 0;
     const uint64_t nb_pts = points->size;
     GrB_Index nf, nb_edges, size_nz_vj, it;
     form_struct tf;
@@ -724,6 +775,16 @@ static GrB_Vector volumes_poly3D_pefv(const Vector_points3D* points, const GrB_M
             }
         }
     }
+    GrB_free(&vj);
+    GrB_free(&nz_vj);
+    GrB_free(&extr_vals_vj);
+    GrB_free(&ff0);
+    GrB_free(&nz_f0);
+    GrB_free(&extr_vals_ff0);
+    GrB_free(&ee0);
+    GrB_free(&nz_e0);
+    GrB_free(&extr_vals_ee0);
+    GrB_free(&surface_j);
     return volume_sizes;
 }
 

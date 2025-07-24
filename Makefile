@@ -27,8 +27,14 @@ $(OBJ)/%.o: %.c
 
 $(OBJ)/%.o: %.F90
 	$(CF) $(DEBUG) $(OPTS_F) -c $< -o $@
+
+$(OBJ)/ale_connectivity_mod.o: ale_connectivity_mod.F
+	$(CF) $(DEBUG) -Wall -Wextra -Wno-unused-but-set-variable -Wno-unused-function -lm -c $< -o $@
                                               
-$(OBJ)/bridge_fortran_c.o : $(OBJ)/polygon_mod.o
+$(OBJ)/grid_struct_multicutcell_mod.o : $(OBJ)/polygon_mod.o
+$(OBJ)/multicutcell_solver_mod.o : $(OBJ)/polygon_mod.o $(OBJ)/ale_connectivity_mod.o $(OBJ)/grid_struct_multicutcell_mod.o $(OBJ)/integer_linked_list.o $(OBJ)/riemann_solver_mod.o
+$(OBJ)/bridge_fortran_c.o : $(OBJ)/multicutcell_solver_mod.o
+
 
 $(EXEC) : $(OBJECTS) $(OBJECTS_F)
 	$(CF) $(DEBUG) $(INCLUDE_DIR) $(LIB_DIR) $^ $(OPTS_F) $(LINK_OPTS) -o $(EXEC)
