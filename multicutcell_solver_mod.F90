@@ -416,6 +416,48 @@ module multicutcell_solver_mod
     max_nb_points_in_cell = merge(4, 3, NUMELQ>0) ! NUMELQ > 0 ? 4 : 3;
   end function max_nb_points_in_cell
 
+  subroutine compute_close_cells(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid)
+    use polygon_mod
+    use grid2D_struct_multicutcell_mod
+  
+    IMPLICIT NONE
+  
+    ! INPUT argument
+    integer :: NUMELQ, NUMELTG, NUMNOD
+    integer, dimension(:,:) :: IXQ, IXTG
+    my_real, dimension(:,:) :: X
+    ! IN/OUTPUT argument
+    type(grid2D_struct_multicutcell), dimension(:, :) :: grid
+
+    !Local variables
+    logical, dimension(NUMNOD) :: is_narrowband_pt
+    integer :: nb_cell, nb_regions, nb_pts_in_cell, i, k
+
+    nb_cell = size(grid, 1)
+    nb_regions = size(grid, 2)
+    if (NUMELQ>0) then
+      nb_pts_in_cell = 4
+    else
+      nb_pts_in_cell = 3
+    end if
+    !First : all points in contact with a cell in a narrowband are marked as true.
+    is_narrowband_pt(:) = .false.
+    do i = 1,nb_cell
+      do k=2,2+nb_pts_in_cell-1
+        is_narrowband_pt(IXQ(k, i)) = (is_narrowband_pt(IXQ(k, i)) .or. grid(i, 1)%is_narrowband)
+      end do
+    end do
+
+    !Second : all cells that have at least one point marked true are close cells
+    grid(:,:)%close_cells = .false.
+    do i = 1,nb_cell
+      do k=2,2+nb_pts_in_cell-1
+        grid(i,1)%close_cells = (grid(i,1)%close_cells .or. is_narrowband_pt(IXQ(k, i)))
+        grid(i,2:nb_regions)%close_cells = grid(i,1)%close_cells
+      end do
+    end do
+  end subroutine compute_close_cells
+
   subroutine compute_lambdas(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid, dt)
     use polygon_mod
     use grid2D_struct_multicutcell_mod
@@ -447,34 +489,36 @@ module multicutcell_solver_mod
     allocate(ptr_big_lambda_np1(nb_regions))
 
     do i = 1,nb_cell
-      if (NUMELQ>0) then
-        nb_edges = 4
+      if (grid(i,1)%close_cells) then
+        if (NUMELQ>0) then
+          nb_edges = 4
+        else
+          nb_edges = 3
+        end if
         ys(1:nb_edges) = X(2, IXQ(2:2+nb_edges-1, i))
         zs(1:nb_edges) = X(3, IXQ(2:2+nb_edges-1, i))
-      else
-        nb_edges = 3
-        ys(1:nb_edges) = X(2, IXTG(2:2+nb_edges-1, i))
-        zs(1:nb_edges) = X(3, IXTG(2:2+nb_edges-1, i))
-      end if
-      call build_grid_from_points_fortran(ys, zs, nb_edges) 
-      call compute_lambdas2d_fortran(dt, ptr_lambdas_arr, ptr_big_lambda_n, ptr_big_lambda_np1, mean_normal, is_narrowband)
+        call build_grid_from_points_fortran(ys, zs, nb_edges) 
+        call compute_lambdas2d_fortran(dt, ptr_lambdas_arr, ptr_big_lambda_n, ptr_big_lambda_np1, mean_normal, is_narrowband)
 
-      do j=1,nb_regions
-        grid(i,j)%lambdan_per_cell = ptr_big_lambda_n(j)
-        grid(i,j)%lambdanp1_per_cell = ptr_big_lambda_np1(j)
-        grid(i,j)%normal_intern_face_space%y = mean_normal%y
-        grid(i,j)%normal_intern_face_space%z = mean_normal%z
-        grid(i,j)%normal_intern_face_time = mean_normal%t
-        grid(i,j)%is_narrowband = is_narrowband
-        do k=1,nb_edges
-          grid(i,j)%lambda_per_edge(k) = ptr_lambdas_arr((k-1)*nb_regions + j)
+        do j=1,nb_regions
+          grid(i,j)%lambdan_per_cell = ptr_big_lambda_n(j)
+          grid(i,j)%lambdanp1_per_cell = ptr_big_lambda_np1(j)
+          grid(i,j)%normal_intern_face_space%y = mean_normal%y
+          grid(i,j)%normal_intern_face_space%z = mean_normal%z
+          grid(i,j)%normal_intern_face_time = mean_normal%t
+          grid(i,j)%is_narrowband = is_narrowband
+          do k=1,nb_edges
+            grid(i,j)%lambda_per_edge(k) = ptr_lambdas_arr((k-1)*nb_regions + j)
+          end do
         end do
-      end do
+      end if
     end do
 
     deallocate(ptr_lambdas_arr)
     deallocate(ptr_big_lambda_n)
     deallocate(ptr_big_lambda_np1)
+
+    call compute_close_cells(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid)
   end subroutine compute_lambdas
 
   subroutine compute_normals(NUMELQ, NUMELTG, IXQ, IXTG, X, i_cell, normals, nb_normals)

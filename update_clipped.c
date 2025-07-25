@@ -1,6 +1,11 @@
 #include "update_clipped.h"
 #include <string.h>
 
+static my_real clamp(my_real d, my_real min, my_real max) {
+  const my_real t = d < min ? min : d;
+  return t > max ? max : t;
+}
+
 static my_real compute_angle_between_edges2D(Point2D *e1_ext1, Point2D *e1_ext2, Point2D *e2_ext1, Point2D *e2_ext2){
         my_real n1x, n1y, n2x, n2y;
         my_real dotp, norm_n1, norm_n2;
@@ -29,10 +34,11 @@ static my_real compute_angle_between_edges2D(Point2D *e1_ext1, Point2D *e1_ext2,
         dotp = n1x*n2x + n1y*n2y;
         norm_n1 = sqrt(n1x*n1x + n1y*n1y);
         norm_n2 = sqrt(n2x*n2x + n2y*n2y);
+
     #if (my_real == double)
-        return acos(dotp/(norm_n1*norm_n2));
+        return acos(clamp(dotp/(norm_n1*norm_n2), -1.0, 1.0));
     #else
-       return acosf(dotp/(norm_n1*norm_n2));
+       return acosf(clamp(dotp/(norm_n1*norm_n2), -1.0, 1.0));
     #endif
 }
 
@@ -213,7 +219,7 @@ static void detect_pts_to_delete(Polygon2D* p, my_real dt, const my_real *vsx, c
                 signed_ie0 = *get_ijth_elem_arr_int(*list_del_pts, ind_pt1, 0);
             }
 
-            if (curr_i != ind_pt_del){ //no loop detected: we can explore the other end.
+            if ((list_inds_del1->size == 1) || (curr_i != ind_pt_del)){ //no loop detected: we can explore the other end.
                 curr_i = ind_pt_del;
                 signed_ie0 = *get_ijth_elem_arr_int(*list_del_pts, ind_pt2, 0);
                 while (signed_ie0 > -1){

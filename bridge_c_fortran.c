@@ -14,8 +14,8 @@ Polygon2D* clipped = NULL;
 Polyhedron3D* clipped3D = NULL;
 
 void launch_grb_(){
-    //GrB_init(GrB_NONBLOCKING);
-    GrB_init(GrB_BLOCKING);
+    GrB_init(GrB_NONBLOCKING);
+    //GrB_init(GrB_BLOCKING);
 }
 
 void end_grb_(){

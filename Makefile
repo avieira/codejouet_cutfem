@@ -13,7 +13,7 @@ OPTS_F = -Wall -Wextra -Wno-unused-but-set-variable -Wno-unused-function -std=f9
 #CF = ifx
 #OPTS_C = -Wall -Wextra -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-command-line-argument -std=c11 -lm 
 ##OPTS_F = -Wall -Wextra -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-command-line-argument -stand f95 -lm 
-LINK_OPTS = -Wl,-rpath,/home/castor/Documents/travaux/bridge_fortran_sparsesuite/GraphBLAS/build ./GraphBLAS/build/libgraphblas.so.10.0.2
+LINK_OPTS = -Wl,-rpath,./GraphBLAS/build ./GraphBLAS/build/libgraphblas.so
 
 SOURCES = $(wildcard *.c) 
 SOURCES_F = $(wildcard *.F90)
