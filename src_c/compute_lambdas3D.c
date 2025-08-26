@@ -228,7 +228,6 @@ Polyhedron3D* clip3D(const Polyhedron3D *clipper, const Polyhedron3D *clipped){
     return clipped_in;
 }
 
-
 /// @brief Compute the effective area on each face of grid.
 /// @details The effective area is the area of each face of `grid` minus the area intersected with `initial_p`.
 ///          The result consists in an ordered list of the faces of `grid` and 
@@ -239,7 +238,8 @@ Polyhedron3D* clip3D(const Polyhedron3D *clipper, const Polyhedron3D *clipped){
 /// @param lambdas [OUT] effective areas (allocated inside the function)
 /// @param mean_normal [OUT] normal vector of the surface of `initial_p` clipped inside `grid`.
 /// @param is_narrowband [OUT] true if the intersection of `grid` and `initial_p` is not empty, false otherwise.
-void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initial_p, Vector_points3D **lambdas, Point3D *mean_normal, bool *is_narrowband){
+void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initial_p, const uint64_t nb_pts, const int64_t id_cell, \
+                            Vector_points3D **lambdas, Point3D *mean_normal, bool *is_narrowband){
     Polyhedron3D *p = clip3D(grid, initial_p);
     GrB_Index nb_edge, nb_cols_vol, nb_cols_fac, i, j;//, e;
     Point3D pt, *nvpi, *lam;
@@ -299,12 +299,15 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
 /// @param grid [IN] non-moving polygon, clipper.
 /// @param clipped3D [IN] moving polygon.
 /// @param dt [IN] time-step
+/// @param nb_pts [IN] Number of points in 2D polygon used to build clipped3D
+/// @param id_cell [IN] Cell identificator of grid
 /// @param lambdas_arr [OUT] Array of effective area for each edge of `grid`. Allocated inside the function.
 /// @param big_lambda_n [OUT] First cell: effective area at time t^n. Second cell: area of grid - effective area. Allocated inside the function.
 /// @param big_lambda_np1 [OUT] First cell: effective area at time t^n+`dt`. Second cell: area of grid - effective area. Allocated inside the function.
 /// @param is_narrowband [OUT] True if the intersection of `grid` and `clipped` is not empty at time t^n or t^n+`dt`, false otherwise.
-void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, const my_real dt, \
-                        Array_double **lambdas_arr, Vector_double** big_lambda_n, Vector_double** big_lambda_np1, Point3D *mean_normal, bool *is_narrowband){
+void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, const my_real dt, const uint64_t nb_pts, const int64_t id_cell, \
+                        Array_double **lambdas_arr, Vector_double** big_lambda_n, Vector_double** big_lambda_np1, \
+                        Point3D *mean_normal, bool *is_narrowband){
     const unsigned int nb_regions = 2;
     my_real *val = (my_real*)malloc(sizeof(my_real));
     my_real nm;
@@ -358,7 +361,7 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
             //    if (*sfj > 2)   *sfj = -1;
             //}
             
-            compute_lambdas2D_time(cell3D, clipped3D, &lambdas3D, &local_mean_normal, &local_narrowband);
+            compute_lambdas2D_time(cell3D, clipped3D, nb_pts, id_cell, &lambdas3D, &local_mean_normal, &local_narrowband);
             //dealloc_Polyhedron3D(clipped3D);
             //λ, ni, is_na = compute_lambdas(cell3D, clipped3D)
 

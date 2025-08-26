@@ -498,7 +498,8 @@ module multicutcell_solver_mod
         ys(1:nb_edges) = X(2, IXQ(2:2+nb_edges-1, i))
         zs(1:nb_edges) = X(3, IXQ(2:2+nb_edges-1, i))
         call build_grid_from_points_fortran(ys, zs, nb_edges) 
-        call compute_lambdas2d_fortran(dt, ptr_lambdas_arr, ptr_big_lambda_n, ptr_big_lambda_np1, mean_normal, is_narrowband)
+        call compute_lambdas2d_fortran(dt, i, ptr_lambdas_arr, ptr_big_lambda_n, ptr_big_lambda_np1, mean_normal, &
+                                      is_narrowband)
 
         do j=1,nb_regions
           grid(i,j)%lambdan_per_cell = ptr_big_lambda_n(j)
@@ -588,16 +589,61 @@ module multicutcell_solver_mod
     end do
   end subroutine compute_normals
 
-  function find_ind_encompassing_cell(pt) result(i)
+  subroutine compute_all_id_pt_cell(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid, nb_pts_clipped, id_pt_cell)
+    use grid2D_struct_multicutcell_mod
     use polygon_mod
-    implicit none
-    type(Point2D) :: pt
-    integer(kind=8) :: i
+  
+    IMPLICIT NONE
+  
+    ! INPUT argument
+    integer :: NUMELQ, NUMELTG, NUMNOD
+    integer, dimension(:,:) :: IXQ, IXTG
+    my_real, dimension(:,:) :: X
+    type(grid2D_struct_multicutcell), dimension(:, :) :: grid
+    integer(kind=8) :: nb_pts_clipped
+    ! OUTPUT argument
+    integer(kind=8), dimension(:) :: id_pt_cell
 
-    i = 1 !TODO Change this
-  end function find_ind_encompassing_cell
+    !Dummy arguments
+    type(Point2D), dimension(4) :: normals
+    type(Point2D) :: pt, pt_grid
+    my_real :: d
+    integer(kind=8) :: nb_normals
+    integer(kind=8) :: nb_cell
+    integer(kind=8) :: i, j, k
+    logical:: is_inside
 
-  subroutine compute_vec_move_clipped(gamma, rho, vely, velz, p, nb_pts_clipped, &
+    nb_cell = NUMELQ+NUMELTG !size(vely, 1)
+    do i = 1,nb_pts_clipped
+      call get_clipped_ith_vertex_fortran(i, pt) 
+      
+      do j = 1,nb_cell
+        if (any(grid(i, :)%is_narrowband)) then
+          call compute_normals(NUMELQ, NUMELTG, IXQ, IXTG, X, j, normals, nb_normals)
+
+          is_inside = .true.
+          do k=1,nb_normals
+            pt_grid%y = X(2, IXQ(k+1, j))
+            pt_grid%z = X(3, IXQ(k+1, j))
+            d = normals(k)%y*(pt_grid%y-pt%y) + normals(k)%z*(pt_grid%z-pt%z)
+            !d = d/sqrt(normals(k)%y*normals(k)%y + normals(k)%z*normals(k)%z)
+            if (d<0) then
+              is_inside = .false.
+              exit
+            endif
+          enddo
+
+          if (is_inside) then
+            id_pt_cell(i) = j
+            exit
+          endif
+        endif
+      enddo
+    end do
+
+  end subroutine compute_all_id_pt_cell
+
+  subroutine compute_vec_move_clipped(gamma, rho, vely, velz, p, nb_pts_clipped, id_pt_cell,&
                                     normalVecy, normalVecz, normalVecEdgey, normalVecEdgez, &
                                     vec_move_clippedy, vec_move_clippedz, pressure_edge)
     use polygon_mod
@@ -605,18 +651,19 @@ module multicutcell_solver_mod
 
     implicit none
     my_real :: gamma
-    my_real, dimension(:,:) :: rho
-    my_real, dimension(:,:) :: vely
-    my_real, dimension(:,:) :: velz
-    my_real, dimension(:,:) :: p
-    integer(kind=8)       :: nb_pts_clipped
-    my_real, dimension(:) :: normalVecy
-    my_real, dimension(:) :: normalVecz
-    my_real, dimension(:) :: normalVecEdgey
-    my_real, dimension(:) :: normalVecEdgez
-    my_real, dimension(:) :: vec_move_clippedy
-    my_real, dimension(:) :: vec_move_clippedz
-    my_real, dimension(:) :: pressure_edge
+    my_real, dimension(:,:)       :: rho
+    my_real, dimension(:,:)       :: vely
+    my_real, dimension(:,:)       :: velz
+    my_real, dimension(:,:)       :: p
+    integer(kind=8)               :: nb_pts_clipped
+    integer(kind=8), dimension(:) :: id_pt_cell
+    my_real, dimension(:)         :: normalVecy
+    my_real, dimension(:)         :: normalVecz
+    my_real, dimension(:)         :: normalVecEdgey
+    my_real, dimension(:)         :: normalVecEdgez
+    my_real, dimension(:)         :: vec_move_clippedy
+    my_real, dimension(:)         :: vec_move_clippedz
+    my_real, dimension(:)         :: pressure_edge
 
     integer(kind=8) :: eL, eR, k, i
     type(Point2D) :: pt
@@ -627,9 +674,10 @@ module multicutcell_solver_mod
     my_real :: uREdge, vREdgeL, vREdgeR, pEdgeR
 
     do k = 1,nb_pts_clipped
-      call get_clipped_ith_vertex_fortran(k, pt, eR, eL) 
+      call get_clipped_ith_vertex_fortran(k, pt)
+      call get_clipped_edges_ith_vertex_fortran(k, eR, eL) 
       if ((eR>-1) .and. (eL>-1)) then !point k is part of an edge
-        i = find_ind_encompassing_cell(pt) !TODO
+        i = id_pt_cell(k)
         rhoL = rho(i, 1)
         velyL = vely(i, 1)
         velzL = velz(i, 1)
@@ -687,6 +735,7 @@ module multicutcell_solver_mod
     my_real, dimension(:,:) :: p
   
     !Local variables
+    integer(kind=8) :: nb_pts
     integer(kind=8) :: i, j, k
     integer(kind=8) :: nb_cell, nb_regions, nb_edges
     integer(kind=8) :: ind_targ
@@ -715,6 +764,7 @@ module multicutcell_solver_mod
     my_real :: pressure_mean_normal_time
     type(Point2D) :: mean_normal
     integer(kind=2) :: odd_k
+    integer(kind=8), dimension(:), allocatable :: id_pt_cell
     
     dx = sqrt(minval(grid(:, 1)%area))
     nb_cell = NUMELQ+NUMELTG !size(vely, 1)
@@ -733,6 +783,7 @@ module multicutcell_solver_mod
     allocate(normalVecz(nb_pts_clipped))
     allocate(vec_move_clippedy(nb_pts_clipped))
     allocate(vec_move_clippedz(nb_pts_clipped))
+    allocate(id_pt_cell(nb_pts_clipped))
     allocate(pressure_edge(nb_edge_clipped))
     allocate(normalVecEdgey(nb_edge_clipped))
     allocate(normalVecEdgez(nb_edge_clipped))
@@ -751,14 +802,18 @@ module multicutcell_solver_mod
     call compute_normals_clipped_fortran(normalVecy, normalVecz, nb_pts_clipped, &
                                           normalVecEdgey, normalVecEdgez, nb_edge_clipped, min_pos_Se)
 
+
+    call compute_all_id_pt_cell(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid, nb_pts_clipped, id_pt_cell)
     pressure_edge(:) = 0.0
-    call compute_vec_move_clipped(gamma, rho, vely, velz, p, nb_pts_clipped, &
+    call compute_vec_move_clipped(gamma, rho, vely, velz, p, nb_pts_clipped, id_pt_cell, &
                                 normalVecy, normalVecz, normalVecEdgey, normalVecEdgez, &
                                 vec_move_clippedy, vec_move_clippedz, pressure_edge)
   
     call smooth_vel_clipped_fortran(vec_move_clippedy, vec_move_clippedz, min_pos_Se, dt)
     call update_clipped_fortran(vec_move_clippedy, vec_move_clippedz, dt, dx)
   
+    call nb_pts_clipped_fortran(nb_pts)
+
     call compute_lambdas(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid, dt) 
     !TODO exchange lambdas between procs on neighbouring cells
     call fuse_cells(NUMELQ, NUMELTG, ALE_CONNECT, grid, threshold, target_cells, cell_type) 
@@ -845,6 +900,7 @@ module multicutcell_solver_mod
     deallocate(pressure_edge)
     deallocate(vec_move_clippedy)
     deallocate(vec_move_clippedz)
+    deallocate(id_pt_cell)
   
   end subroutine update_fluid
 end module multicutcell_solver_mod

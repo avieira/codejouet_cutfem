@@ -26,7 +26,7 @@ void build_clipped_from_pts_fortran_(const my_real* x_v, const my_real* y_v, con
 /// @param size_big_lambda_np1 
 /// @param mean_normal 
 /// @param is_narrowband 
-void compute_lambdas2d_fortran_(const my_real *dt, \
+void compute_lambdas2d_fortran_(const my_real *dt, const long long *signed_id_cell, \
                         my_real *ptr_lambdas_arr,    \
                         my_real *ptr_big_lambda_n,   \
                         my_real *ptr_big_lambda_np1, \
@@ -37,7 +37,8 @@ void compute_normals_clipped_fortran_(my_real* normalVecx, my_real* normalVecy, 
                                         my_real* normalVecEdgex, my_real* normalVecEdgey, long long* signed_nb_edges, \
                                         my_real* min_pos_Se);
 void smooth_vel_clipped_fortran_(my_real* vec_move_clippedx, my_real* vec_move_clippedy, my_real* min_pos_Se, my_real *dt);
-void get_clipped_ith_vertex_fortran_(long long int *k, Point2D *pt, long long int *signed_eR, long long int *signed_eL);
+void get_clipped_ith_vertex_fortran_(long long int *k, Point2D *pt);
+void get_clipped_edges_ith_vertex_fortran_(long long int *k, long long int *signed_eR, long long int *signed_eL);
 void update_clipped_fortran_(const my_real* vec_move_clippedy, const my_real* vec_move_clippedz, const my_real* dt, const my_real *dx);
 
 #endif

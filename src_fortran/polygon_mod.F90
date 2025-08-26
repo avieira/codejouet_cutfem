@@ -1,4 +1,4 @@
-#define my_real DOUBLE PRECISION
+#include "my_real.inc"
 
 module polygon_mod
 type Point2D

@@ -451,16 +451,16 @@ static Polyhedron3D* build_space_time_cell_given_tnp1_vertices(const Polygon2D* 
 
     GrB_Matrix_ncols(&nb_cols_newfaces, *new_faces);
     status_faces = alloc_with_capacity_vec_int(nb_cols_newfaces);
+    val = 1;
     for(i = 0; i < nb_cols_faces; i++){
-        val = 1;
         set_ith_elem_vec_int(status_faces, i, &val);
     }
+    val = 2;
     for(i = nb_cols_faces; i < 2*nb_cols_faces; i++){
-        val = 2;
         set_ith_elem_vec_int(status_faces, i, &val);
     }
+    val = 0;
     for(i = 2*nb_cols_faces; i < nb_cols_newfaces; i++){
-        val = 0;
         set_ith_elem_vec_int(status_faces, i, &val);
     }
 

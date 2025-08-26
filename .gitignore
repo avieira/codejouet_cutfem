@@ -3,3 +3,5 @@ obj/*.o
 .vscode/
 *.o
 *main
+main.exe
+build/

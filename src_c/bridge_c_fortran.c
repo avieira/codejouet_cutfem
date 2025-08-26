@@ -54,7 +54,7 @@ void build_clipped_from_pts_fortran_(const my_real* x_v, const my_real* y_v, con
     clipped = polygon_from_consecutive_points(x_v, y_v, nb_pts);
 }
 
-void compute_lambdas2d_fortran_(const my_real *dt, \
+void compute_lambdas2d_fortran_(const my_real *dt, const long long *signed_id_cell, \
                         my_real *ptr_lambdas_arr,   \
                         my_real *ptr_big_lambda_n,  \
                         my_real *ptr_big_lambda_np1,\
@@ -64,7 +64,11 @@ void compute_lambdas2d_fortran_(const my_real *dt, \
     Vector_double *Lambda_n = alloc_empty_vec_double();
     Vector_double *Lambda_np1 = alloc_empty_vec_double();
 
-    compute_lambdas2D(grid, clipped3D, *dt, &lambdas, &Lambda_n, &Lambda_np1, mean_normal, is_narrowband);
+    uint64_t id_cell = (uint64_t) *signed_id_cell;
+    uint64_t nb_pts;
+    nb_pts = clipped->vertices->size; //TODO: problem when correcting auto-intersection : points are suppressed!
+
+    compute_lambdas2D(grid, clipped3D, nb_pts, id_cell, *dt, &lambdas, &Lambda_n, &Lambda_np1, mean_normal, is_narrowband);
 
     memcpy(ptr_lambdas_arr, lambdas->data, lambdas->ncols*lambdas->nrows*sizeof(my_real));
 
@@ -181,7 +185,11 @@ void smooth_vel_clipped_fortran_(my_real* vec_move_clippedx, my_real* vec_move_c
     GrB_free(&id);
 }
 
-void get_clipped_ith_vertex_fortran_(long long *k, Point2D *pt, long long *signed_eR, long long *signed_eL){
+void get_clipped_ith_vertex_fortran_(long long *k, Point2D *pt){
+    *pt = *get_ith_elem_vec_pts2D(clipped->vertices, *k); 
+}
+
+void get_clipped_edges_ith_vertex_fortran_(long long *k, long long *signed_eR, long long *signed_eL){
     uint64_t eR, eL;
     GrB_Matrix e_k;
     GrB_Vector nz_e_k, extr_vals_e_k, I_vec_e_k;
@@ -190,7 +198,6 @@ void get_clipped_ith_vertex_fortran_(long long *k, Point2D *pt, long long *signe
     GrB_Info infogrb;
 
     nb_pts = clipped->vertices->size;
-    *pt = *get_ith_elem_vec_pts2D(clipped->vertices, *k); 
 
     infogrb = GrB_Matrix_new(&e_k, GrB_INT8, 1, nb_pts);
     infogrb = GrB_Vector_new(&nz_e_k, GrB_UINT64, 2);
