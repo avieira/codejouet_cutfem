@@ -2,124 +2,6 @@
 #include <math.h>
 #include "update_clipped.h"
 
-// Norm of `p`
-static my_real norm(const Point3D* p){
-    return sqrt(p->x*p->x + p->y*p->y + p->t*p->t);
-}
-
-//Returns a polygon consisting in only the extracted face.
-static Polygon2D* extract_ith_face(const Polygon2D *p, uint64_t extr_index){
-    GrB_Matrix *new_faces, *intermediate_faces, *new_edges;
-    Vector_points2D *new_vertices;
-    Vector_int *new_status_edge;
-    GrB_Vector val_extr, J_vect, pt_indices;
-    GrB_Index ncols_faces, ncols_edges;
-    GrB_Index nrows_faces, nrows_edges;
-    GrB_Index length_edge_ind;
-    GrB_Index i, j, e_i;
-    unsigned long int indpt1, indpt2;
-    GrB_Index *I_;
-    GrB_Index *edge_indices;
-    uint8_t *nm;
-    Vector_uint *pts_kept_inds;
-    bool found;
-
-    GrB_Matrix_ncols(&ncols_faces, *(p->faces));
-    if (extr_index>=ncols_faces){
-        printf("Can't extract face %ld of a polygon with only %ld face(s).", extr_index, ncols_faces);
-        return NULL;
-    }
-
-    GrB_Matrix_nrows(&nrows_faces, *(p->faces));
-    GrB_Matrix_ncols(&ncols_edges, *(p->edges));
-    GrB_Matrix_nrows(&nrows_edges, *(p->edges));
-
-    new_faces = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
-    intermediate_faces = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
-    new_edges = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
-    
-    //First, extract new face.
-    I_ = (GrB_Index*)malloc((nrows_faces>nrows_edges ? nrows_faces : nrows_edges)*sizeof(GrB_Index));
-    for (i=0; i<nrows_faces; i++){
-        I_[i] = i;
-    }
-    GrB_Matrix_new(intermediate_faces, GrB_INT8, nrows_faces, 1);
-    GrB_Matrix_extract(*intermediate_faces, GrB_NULL, GrB_NULL, *(p->faces), I_, nrows_faces, (GrB_Index[]){extr_index}, 1, GrB_NULL);
-
-    //Second, take all edge indices in the extracted face.
-    GrB_Matrix_nvals(&length_edge_ind, *intermediate_faces);
-    edge_indices = (GrB_Index*) calloc(length_edge_ind, sizeof(GrB_Index));
-    nm = (uint8_t*) malloc(length_edge_ind*sizeof(uint8_t));
-    GrB_Matrix_extractTuples(edge_indices, I_, nm, &length_edge_ind, *intermediate_faces);
-
-    //Third, build a unique list of indices of points involved in kept edges
-    GrB_Vector_new(&pt_indices, GrB_UINT64, 2);
-    GrB_Vector_new(&J_vect, GrB_UINT64, nrows_edges);
-    GrB_Vector_new(&val_extr, GrB_INT8, 2);
-    pts_kept_inds = alloc_empty_vec_uint();
-    for (i=0; i<length_edge_ind; i++){
-        e_i = edge_indices[i];
-        GrB_extract(J_vect, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, e_i, GrB_NULL);
-        GrB_Vector_extractTuples(pt_indices, val_extr, J_vect, GrB_NULL);
-        GrB_Vector_extractElement(&indpt1, pt_indices, 0);
-        GrB_Vector_extractElement(&indpt2, pt_indices, 1);
-
-        found = false;
-        for(j=0;j<pts_kept_inds->size; j++){
-            if (indpt1 == *get_ith_elem_vec_uint(pts_kept_inds, j)){
-                found = true;
-                break;
-            }
-        }
-        if (!found){
-            push_back_vec_uint(pts_kept_inds, &indpt1);
-        }
-
-        found = false;
-        for(j=0;j<pts_kept_inds->size; j++){
-            if (indpt2 == *get_ith_elem_vec_uint(pts_kept_inds, j)){
-                found = true;
-                break;
-            }
-        }
-        if (!found){
-            push_back_vec_uint(pts_kept_inds, &indpt2);
-        }
-    }
-
-    //Build the new list of vertices
-    new_vertices = alloc_with_capacity_vec_pts2D(pts_kept_inds->size);
-    for (i=0; i<pts_kept_inds->size; i++){
-        indpt1 = *get_ith_elem_vec_uint(pts_kept_inds, i);
-        set_ith_elem_vec_pts2D(new_vertices, i, get_ith_elem_vec_pts2D(p->vertices, indpt1));
-    }
-    //Build the new list of status of each edge
-    new_status_edge = alloc_with_capacity_vec_int(length_edge_ind);
-    for (i=0; i<pts_kept_inds->size; i++){
-        indpt1 = edge_indices[i];
-        set_ith_elem_vec_int(new_status_edge, i, get_ith_elem_vec_int(p->status_edge, indpt1));
-    }
-
-    //Build the new array describing the edges
-    GrB_Matrix_new(new_edges, GrB_INT8, pts_kept_inds->size, length_edge_ind);
-    GrB_Matrix_extract(*new_edges, GrB_NULL, GrB_NULL, *(p->edges), pts_kept_inds->data, pts_kept_inds->size, edge_indices, length_edge_ind, GrB_NULL);
-
-    //Re-extract new_faces in order to get rid of un-necessary zeros
-    GrB_Matrix_new(new_faces, GrB_INT8, length_edge_ind, 1);
-    GrB_Matrix_extract(*new_faces, GrB_NULL, GrB_NULL, *intermediate_faces, edge_indices, length_edge_ind, (GrB_Index[]){extr_index}, 1, GrB_NULL);
-
-    free(I_);
-    free(edge_indices);
-    free(nm);
-    dealloc_vec_uint(pts_kept_inds);
-    GrB_free(&val_extr);
-    GrB_free(&J_vect);
-    GrB_free(&pt_indices);
-    GrB_free(intermediate_faces);
-
-    return new_Polygon2D_vefs(new_vertices, new_edges, new_faces, new_status_edge);
-}
-
 //Clips `p` using a plane defined by `n_face` and `pt_face`.
 //`mark_edge` is used as a tag for retrieving the edge or face defining the cutting plane.
 //`sign_taken` changes the orientation of `n_face`.
@@ -141,23 +23,15 @@ static void build_clipped_in_partial(Polyhedron3D* p, Point3D *n_face, Point3D *
 
     //Copy new polyhedron in p.
     copy_vec_pts3D(pts_copy, p->vertices);
-    dealloc_vec_pts3D(pts_copy);
-    free(pts_copy);
+    dealloc_vec_pts3D(pts_copy); free(pts_copy);
     copy_vec_int(status_face, p->status_face);
-    dealloc_vec_int(status_face);
-    free(status_face);
-    //free(p->edges);
-    //p->edges = edges_in;
-    //free(p->faces);
-    //p->faces = faces_in;
-    //free(p->volumes);
-    //p->volumes = volumes_in;
+    dealloc_vec_int(status_face); free(status_face);
     GrB_Matrix_dup(p->edges, *edges_in);
     GrB_Matrix_dup(p->faces, *faces_in);
     GrB_Matrix_dup(p->volumes, *volumes_in);
-    GrB_free(edges_in);
-    GrB_free(faces_in);
-    GrB_free(volumes_in);
+    GrB_free(edges_in); free(edges_in);
+    GrB_free(faces_in);free(faces_in);
+    GrB_free(volumes_in);free(volumes_in);
 }
 
 //Returns the first point of `i`th face in p.
@@ -216,14 +90,19 @@ Polyhedron3D* clip3D(const Polyhedron3D *clipper, const Polyhedron3D *clipped){
     copy_Polyhedron3D(clipped, clipped_in);
     //for i in eachindex(normal_vectors)
     for (i = 0; i<normal_vectors->size; i++){
+        if(!clipped_in)
+            break;
         stf_i = get_ith_elem_vec_int(clipper->status_face, i);
         if (*stf_i > 2){
             n_face = get_ith_elem_vec_pts3D(normal_vectors, i);
             pt_face = first_point_of_ith_face(clipper, i);
             GrB_Matrix_extractElement(&vol_i, *(clipper->volumes), i, 0);
             build_clipped_in_partial(clipped_in, n_face, pt_face, *stf_i, -vol_i);
+            clean_Polyhedron3D(clipped_in, &clipped_in);
         }
     }
+
+    dealloc_vec_pts3D(normal_vectors); free(normal_vectors);
 
     return clipped_in;
 }
@@ -238,7 +117,7 @@ Polyhedron3D* clip3D(const Polyhedron3D *clipper, const Polyhedron3D *clipped){
 /// @param lambdas [OUT] effective areas (allocated inside the function)
 /// @param mean_normal [OUT] normal vector of the surface of `initial_p` clipped inside `grid`.
 /// @param is_narrowband [OUT] true if the intersection of `grid` and `initial_p` is not empty, false otherwise.
-void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initial_p, const uint64_t nb_pts, const int64_t id_cell, \
+void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initial_p, \
                             Vector_points3D **lambdas, Point3D *mean_normal, bool *is_narrowband){
     Polyhedron3D *p = clip3D(grid, initial_p);
     GrB_Index nb_edge, nb_cols_vol, nb_cols_fac, i, j;//, e;
@@ -249,8 +128,6 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
     Vector_points3D *norm_vec_poly;
 
     GrB_Matrix_ncols(&nb_edge, *(grid->faces)); //actually number of edges + 2 faces at times tn and tn+dt
-    GrB_Matrix_ncols(&nb_cols_vol, *(p->volumes)); 
-    GrB_Matrix_ncols(&nb_cols_fac, *(p->faces)); 
 
     *lambdas = alloc_with_capacity_vec_pts3D(nb_edge);
     for (j=0; j<nb_edge; j++){
@@ -262,34 +139,41 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
     
     *mean_normal = (Point3D){0.0, 0.0, 0.0};
     *is_narrowband = false;
-    for(i=0; i<nb_cols_fac; i++){
-        psfi = get_ith_elem_vec_int(p->status_face, i);
-        nvpi = get_ith_elem_vec_pts3D(norm_vec_poly, i);
-        for (j=0; j<nb_cols_vol; j++){
-            pvij_int = 0; //if volumes[i,j] does not exist, it won't change the value of pvij_int.
-            GrB_Matrix_extractElement(&pvij_int, *(p->volumes), i, j);
-            if (pvij_int != 0){
-                if (*psfi<1){
-                    pvij = (my_real) pvij_int;
-                    inplace_xpay_points3D(mean_normal, pvij, nvpi);
-                    *is_narrowband = true;
+    
+    if(p){
+        GrB_Matrix_ncols(&nb_cols_vol, *(p->volumes)); 
+        GrB_Matrix_ncols(&nb_cols_fac, *(p->faces)); 
+        for(i=0; i<nb_cols_fac; i++){
+            psfi = get_ith_elem_vec_int(p->status_face, i);
+            nvpi = get_ith_elem_vec_pts3D(norm_vec_poly, i);
+            for (j=0; j<nb_cols_vol; j++){
+                pvij_int = 0; //if volumes[i,j] does not exist, it won't change the value of pvij_int.
+                GrB_Matrix_extractElement(&pvij_int, *(p->volumes), i, j);
+                if (pvij_int != 0){
+                    if (*psfi<1){
+                        pvij = (my_real) pvij_int;
+                        inplace_xpay_points3D(mean_normal, pvij, nvpi);
+                        *is_narrowband = true;
+                    }
+                    else {
+                        lam = get_ith_elem_vec_pts3D(*lambdas, *psfi-1);
+                        inplace_axpy_points3D(lam, 1.0, nvpi);
+                    }
+                    //for (e = 1; e<=nb_edge; e++){
+                    //    if (*psfi == ((long int) e)){
+                    //        lam = get_ith_elem_vec_pts3D(lambdas, e-1);
+                    //        inplace_axpy_points3D(lam, 1.0, nvpi);
+                    //    }
+                    //}
                 }
-                else {
-                    lam = get_ith_elem_vec_pts3D(*lambdas, *psfi-1);
-                    inplace_axpy_points3D(lam, 1.0, nvpi);
-                }
-                //for (e = 1; e<=nb_edge; e++){
-                //    if (*psfi == ((long int) e)){
-                //        lam = get_ith_elem_vec_pts3D(lambdas, e-1);
-                //        inplace_axpy_points3D(lam, 1.0, nvpi);
-                //    }
-                //}
             }
         }
     }
 
-    dealloc_vec_pts3D(norm_vec_poly);
-    dealloc_Polyhedron3D(p);
+    dealloc_vec_pts3D(norm_vec_poly); free(norm_vec_poly);
+    if(p){
+        dealloc_Polyhedron3D(p); free(p);
+    }
 }
 
 /// @brief Compute the effective areas in `grid` when occupied by `clipped` moving with vectors `vec_move_solid` for time `dt`. 
@@ -305,7 +189,7 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
 /// @param big_lambda_n [OUT] First cell: effective area at time t^n. Second cell: area of grid - effective area. Allocated inside the function.
 /// @param big_lambda_np1 [OUT] First cell: effective area at time t^n+`dt`. Second cell: area of grid - effective area. Allocated inside the function.
 /// @param is_narrowband [OUT] True if the intersection of `grid` and `clipped` is not empty at time t^n or t^n+`dt`, false otherwise.
-void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, const my_real dt, const uint64_t nb_pts, const int64_t id_cell, \
+void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, const my_real dt, \
                         Array_double **lambdas_arr, Vector_double** big_lambda_n, Vector_double** big_lambda_np1, \
                         Point3D *mean_normal, bool *is_narrowband){
     const unsigned int nb_regions = 2;
@@ -361,7 +245,7 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
             //    if (*sfj > 2)   *sfj = -1;
             //}
             
-            compute_lambdas2D_time(cell3D, clipped3D, nb_pts, id_cell, &lambdas3D, &local_mean_normal, &local_narrowband);
+            compute_lambdas2D_time(cell3D, clipped3D, &lambdas3D, &local_mean_normal, &local_narrowband);
             //dealloc_Polyhedron3D(clipped3D);
             //λ, ni, is_na = compute_lambdas(cell3D, clipped3D)
 
@@ -389,11 +273,11 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
         i = 0;
         area = get_ith_elem_vec_pts3D(surfaces, i);
         occupied = get_ith_elem_vec_pts3D(occupied_area, i);
-        *val = fmax(0., norm(area) - norm(occupied));
+        *val = fmax(0., norm_pt3D(*area) - norm_pt3D(*occupied));
 
         set_ith_elem_vec_double(*big_lambda_n, 0, val);
         for(k = 1; k<nb_regions; k++){
-            nm = norm(get_ijth_elem_arr_pts3D(local_lambdas, i, k-1));
+            nm = norm_pt3D(*get_ijth_elem_arr_pts3D(local_lambdas, i, k-1));
             set_ith_elem_vec_double(*big_lambda_n, k, &nm);
         }
         
@@ -401,26 +285,26 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
         i = 1;
         area = get_ith_elem_vec_pts3D(surfaces, i);
         occupied = get_ith_elem_vec_pts3D(occupied_area, i);
-        *val = fmax(0., norm(area) - norm(occupied));
+        *val = fmax(0., norm_pt3D(*area) - norm_pt3D(*occupied));
         set_ith_elem_vec_double(*big_lambda_np1, 0, val);
         for(k = 1; k<nb_regions; k++){
-            nm = norm(get_ijth_elem_arr_pts3D(local_lambdas, i, k-1));
+            nm = norm_pt3D(*get_ijth_elem_arr_pts3D(local_lambdas, i, k-1));
             set_ith_elem_vec_double(*big_lambda_np1, k, &nm);
         }
 
         for (i=2; i<nb_edge + 2; i++){
             area = get_ith_elem_vec_pts3D(surfaces, i);
             occupied = get_ith_elem_vec_pts3D(occupied_area, i);
-            *val = fmax(0., norm(area) - norm(occupied));
+            *val = fmax(0., norm_pt3D(*area) - norm_pt3D(*occupied));
             set_ijth_elem_arr_double(*lambdas_arr, i-2, 0, val);
             for(k = 1; k<nb_regions; k++){
-                nm = norm(get_ijth_elem_arr_pts3D(local_lambdas, i, k-1));
+                nm = norm_pt3D(*get_ijth_elem_arr_pts3D(local_lambdas, i, k-1));
                 set_ijth_elem_arr_double(*lambdas_arr, i-2, k, &nm); 
             }
         }
     } else {
         i = 0;
-        *val = norm(get_ith_elem_vec_pts3D(surfaces, i));
+        *val = norm_pt3D(*get_ith_elem_vec_pts3D(surfaces, i));
         set_ith_elem_vec_double(*big_lambda_n, 0, val);
         nm = 0.;
         for(k = 1; k<nb_regions; k++){
@@ -428,14 +312,14 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
         }
 
         i = 1;
-        *val = norm(get_ith_elem_vec_pts3D(surfaces, i));
+        *val = norm_pt3D(*get_ith_elem_vec_pts3D(surfaces, i));
         set_ith_elem_vec_double(*big_lambda_np1, 0, val);
         for(k = 1; k<nb_regions; k++){
             set_ith_elem_vec_double(*big_lambda_np1, k, &nm);
         }
 
         for (i=2; i<nb_edge + 2; i++){
-            *val = norm(get_ith_elem_vec_pts3D(surfaces, i));
+            *val = norm_pt3D(*get_ith_elem_vec_pts3D(surfaces, i));
             set_ijth_elem_arr_double(*lambdas_arr, i-2, 0, val);
 
             for(k = 1; k<nb_regions; k++){
@@ -444,8 +328,11 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
         }
     }
 
-    dealloc_Polyhedron3D(cell3D);
-    dealloc_vec_pts3D(surfaces);
+    dealloc_Polyhedron3D(cell3D); free(cell3D);
+    dealloc_vec_pts3D(surfaces); free(surfaces);
+    dealloc_vec_pts3D(occupied_area); free(occupied_area);
+    dealloc_vec_pts3D(lambdas3D); free(lambdas3D);
+    dealloc_arr_pts3D(local_lambdas); free(local_lambdas);
     if (vec_move_gridx) free(vec_move_gridx);
     if (vec_move_gridy) free(vec_move_gridy);
     if (val) free(val);

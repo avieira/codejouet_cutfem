@@ -4,6 +4,23 @@
 #include <stdint.h>
 
 typedef struct {
+    int8_t* data;
+    uint64_t size, capacity;
+} Vector_int8;
+
+void push_back_vec_int8(Vector_int8* v, const int8_t* point);
+void double_capacity_vec_int8(Vector_int8* v);
+Vector_int8* alloc_empty_vec_int8();
+Vector_int8* alloc_with_init_vec_int8(const int8_t* points, uint64_t size);
+Vector_int8* alloc_with_capacity_vec_int8(uint64_t size);
+void dealloc_vec_int8(Vector_int8* v);
+int8_t* get_ith_elem_vec_int8(const Vector_int8* v, uint64_t i);
+void set_ith_elem_vec_int8(Vector_int8* v, uint64_t i, const int8_t* d);
+void copy_vec_int8(const Vector_int8* src, Vector_int8* dest);
+void print_vec_int8(const Vector_int8* v);
+Vector_int8* cat_vec_int8(const Vector_int8* v1, const Vector_int8* v2);
+
+typedef struct {
     long int* data;
     uint64_t size, capacity;
 } Vector_int;
@@ -22,21 +39,24 @@ Vector_int* cat_vec_int(const Vector_int* v1, const Vector_int* v2);
 
 
 typedef struct {
-    long unsigned int* data;
+    uint64_t* data;
     uint64_t size, capacity;
 } Vector_uint;
 
-void push_back_vec_uint(Vector_uint* v, const long unsigned int* point);
+void push_back_vec_uint(Vector_uint* v, const uint64_t* point);
+void push_back_unique_vec_uint(Vector_uint* v, const uint64_t* point);
 void double_capacity_vec_uint(Vector_uint* v);
 Vector_uint* alloc_empty_vec_uint();
-Vector_uint* alloc_with_init_vec_uint(const long unsigned int* points, uint64_t size);
+Vector_uint* alloc_with_init_vec_uint(const uint64_t* points, uint64_t size);
 Vector_uint* alloc_with_capacity_vec_uint(uint64_t size);
 void dealloc_vec_uint(Vector_uint* v);
-long unsigned int* get_ith_elem_vec_uint(const Vector_uint* v, uint64_t i);
-void set_ith_elem_vec_uint(Vector_uint* v, uint64_t i, long unsigned int* d);
+uint64_t* get_ith_elem_vec_uint(const Vector_uint* v, uint64_t i);
+void set_ith_elem_vec_uint(Vector_uint* v, uint64_t i, uint64_t* d);
 void copy_vec_uint(const Vector_uint* src, Vector_uint* dest);
 void print_vec_uint(const Vector_uint* v);
 Vector_uint* cat_vec_uint(const Vector_uint* v1, const Vector_uint* v2);
+void sort_vec_uint(Vector_uint* v);
+int8_t is_in_vec_uint(const Vector_uint* v, const uint64_t* point);
 
 typedef struct {
     int64_t* data;

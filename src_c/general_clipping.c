@@ -2,112 +2,112 @@
 #include "my_real.h"
 
 void cut_edges3D(const Polyhedron3D* p, const Point3D* normal, const Point3D* pt, int8_t sign_taken, Vector_points3D* pts_copy, GrB_Matrix* new_edges_in){
-        GrB_Index i;
-        Point3D *v, *x1, *x2, newPoint;
-        GrB_Info infogrb;
-        GrB_Vector pts_in;
-        GrB_Matrix pts_in_m_ones, edges_in, addPoints;
-        GrB_Vector broken_edges, temp_v;
-        GrB_Vector nz_be, vals_be;
-        GrB_Index I_index[2];
-        int8_t extr_vals[2], val_be_i;
-        const uint64_t size = p->vertices->size;
-        GrB_Index size_e, size_v, ind_2;
-        unsigned int nb_cut_edges, countPoint;
-        int64_t be_i;
-        my_real* distances = (my_real*)malloc(size*sizeof(my_real));
-        bool dist_i;
+    GrB_Index i;
+    Point3D *v, *x1, *x2, newPoint;
+    GrB_Info infogrb;
+    GrB_Vector pts_in;
+    GrB_Matrix pts_in_m_ones, edges_in, addPoints;
+    GrB_Vector broken_edges, temp_v;
+    GrB_Vector nz_be, vals_be;
+    GrB_Index I_index[2];
+    int8_t extr_vals[2], val_be_i;
+    const uint64_t size = p->vertices->size;
+    GrB_Index size_e, size_v, ind_2;
+    unsigned int nb_cut_edges, countPoint;
+    int64_t be_i;
+    my_real* distances = (my_real*)malloc(size*sizeof(my_real));
+    bool dist_i;
 
-        copy_vec_pts3D(p->vertices, pts_copy);
+    copy_vec_pts3D(p->vertices, pts_copy);
 
-        //Compute distances of points to separation hyperplane
+    //Compute distances of points to separation hyperplane
+    for (i=0; i<size; i++){
+        v = get_ith_elem_vec_pts3D(p->vertices, i);
+        distances[i] = compute_distance3D(*v, *normal, *pt);
+    }
+
+    //Mark points inside the domain
+    infogrb = GrB_Vector_new(&pts_in, GrB_INT8, size);
+    if (sign_taken>0){
         for (i=0; i<size; i++){
-            v = get_ith_elem_vec_pts3D(p->vertices, i);
-            distances[i] = compute_distance3D(*v, *normal, *pt);
+            dist_i = distances[i]>=0.0;
+            if (dist_i)
+                infogrb = GrB_Vector_setElement(pts_in, 1, i);
         }
+    }
+    else{
+        for (i=0; i<size; i++){
+            dist_i = distances[i]<0.0;
+            if (dist_i)
+                infogrb = GrB_Vector_setElement(pts_in, 1, i);
+        }
+    }
 
-        //Mark points inside the domain
-        infogrb = GrB_Vector_new(&pts_in, GrB_INT8, size);
-        if (sign_taken>0){
-            for (i=0; i<size; i++){
-                dist_i = distances[i]>=0.0;
-                if (dist_i)
-                    infogrb = GrB_Vector_setElement(pts_in, 1, i);
+    //Compute edges inside the domain.
+    //edges_in = p.edges .* (pts_in * ones(1, size(p.edges, 2)))
+    infogrb = GrB_Matrix_ncols(&size_e, *(p->edges));
+    infogrb = GrB_Matrix_new(&edges_in, GrB_INT8, size, size_e);
+    infogrb = GrB_Vector_size(&size_v, pts_in);
+    infogrb = GrB_Matrix_new(&pts_in_m_ones, GrB_INT8, size_v, size_e); //Eventually, it will be equal to pts_in' * (row vector of ones)
+    for (i = 0; i<size_e; i++){
+        infogrb = GrB_Col_assign(pts_in_m_ones, GrB_NULL, GrB_NULL, pts_in, GrB_ALL, 0, i, GrB_NULL);
+    }
+    infogrb = GrB_eWiseMult(edges_in, GrB_NULL, GrB_NULL, GrB_TIMES_INT8, *(p->edges), pts_in_m_ones, GrB_NULL);
+
+    //Detect broken edges
+    infogrb = GrB_Vector_new(&broken_edges, GrB_INT64, size_e);
+    infogrb = GrB_Vector_new(&nz_be, GrB_INT64, size_e);
+    infogrb = GrB_Vector_new(&vals_be, GrB_INT64, size_e);
+    infogrb = GrB_Vector_new(&temp_v, GrB_INT8, size_e);
+    infogrb = GrB_reduce(broken_edges, GrB_NULL, GrB_NULL, GrB_PLUS_MONOID_INT8, edges_in, GrB_DESC_T0); //sum along the columns
+    infogrb = GrB_assign(broken_edges, broken_edges, GrB_NULL, broken_edges, GrB_ALL, 0, GrB_DESC_R); //suppress all zeros
+    infogrb = GrB_apply(temp_v, GrB_NULL, GrB_NULL, GrB_ABS_INT8, broken_edges, GrB_NULL); //abs on each component
+    infogrb = GrB_reduce(&nb_cut_edges, GrB_NULL, GrB_PLUS_MONOID_INT8, temp_v, GrB_NULL);
+
+    //Add points and complete the edges
+    infogrb = GrB_Matrix_ncols(&size_e, edges_in);
+    if (nb_cut_edges>0){
+        infogrb = GrB_Matrix_new(&addPoints, GrB_INT8, nb_cut_edges, size_e);
+        countPoint = 0;
+        infogrb = GxB_Vector_extractTuples_Vector(nz_be, vals_be, broken_edges, GrB_NULL);
+        infogrb = GrB_Vector_size(&size_v, nz_be);
+    
+        infogrb = GrB_Vector_resize(temp_v, size);
+        for (i=0; i<size_v; i++){
+            infogrb = GrB_Vector_extractElement(&be_i, nz_be, i);
+            infogrb = GrB_Vector_extractElement(&val_be_i, vals_be, i);
+            ind_2 = 2;
+            infogrb = GrB_extract(temp_v, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, be_i, GrB_NULL);
+            infogrb = GrB_Vector_extractTuples(I_index, extr_vals, &ind_2, temp_v);
+
+            if (ind_2>0){ //Check that the vector is not empty
+                x1 = get_ith_elem_vec_pts3D(p->vertices, I_index[0]);
+                x2 = get_ith_elem_vec_pts3D(p->vertices, I_index[1]);
+
+                newPoint = find_intersection3D(*x1, distances[I_index[0]], *x2, distances[I_index[1]]);
+
+                push_back_vec_pts3D(pts_copy, &newPoint);
+                infogrb = GrB_Matrix_setElement(addPoints, -val_be_i, countPoint, be_i);
+                countPoint += 1;
             }
+            
         }
-        else{
-            for (i=0; i<size; i++){
-                dist_i = distances[i]<0.0;
-                if (dist_i)
-                    infogrb = GrB_Vector_setElement(pts_in, 1, i);
-            }
-        }
+        infogrb = GrB_Matrix_new(new_edges_in, GrB_INT8, size + nb_cut_edges, size_e);
+        GxB_Matrix_concat(*new_edges_in, (GrB_Matrix[]){edges_in, addPoints}, 2, 1, GrB_NULL);
+        GrB_free(&addPoints);
+    } else {
+        infogrb = GrB_Matrix_new(new_edges_in, GrB_INT8, size, size_e);
+        GrB_Matrix_dup(new_edges_in, edges_in);
+    }
 
-        //Compute edges inside the domain.
-        //edges_in = p.edges .* (pts_in * ones(1, size(p.edges, 2)))
-        infogrb = GrB_Matrix_ncols(&size_e, *(p->edges));
-        infogrb = GrB_Matrix_new(&edges_in, GrB_INT8, size, size_e);
-        infogrb = GrB_Vector_size(&size_v, pts_in);
-        infogrb = GrB_Matrix_new(&pts_in_m_ones, GrB_INT8, size_v, size_e); //Eventually, it will be equal to pts_in' * (row vector of ones)
-        for (i = 0; i<size_e; i++){
-            infogrb = GrB_Col_assign(pts_in_m_ones, GrB_NULL, GrB_NULL, pts_in, GrB_ALL, 0, i, GrB_NULL);
-        }
-        infogrb = GrB_eWiseMult(edges_in, GrB_NULL, GrB_NULL, GrB_TIMES_INT8, *(p->edges), pts_in_m_ones, GrB_NULL);
-
-        //Detect broken edges
-        infogrb = GrB_Vector_new(&broken_edges, GrB_INT64, size_e);
-        infogrb = GrB_Vector_new(&nz_be, GrB_INT64, size_e);
-        infogrb = GrB_Vector_new(&vals_be, GrB_INT64, size_e);
-        infogrb = GrB_Vector_new(&temp_v, GrB_INT8, size_e);
-        infogrb = GrB_reduce(broken_edges, GrB_NULL, GrB_NULL, GrB_PLUS_MONOID_INT8, edges_in, GrB_DESC_T0); //sum along the columns
-        infogrb = GrB_assign(broken_edges, broken_edges, GrB_NULL, broken_edges, GrB_ALL, 0, GrB_DESC_R); //suppress all zeros
-        infogrb = GrB_apply(temp_v, GrB_NULL, GrB_NULL, GrB_ABS_INT8, broken_edges, GrB_NULL); //abs on each component
-        infogrb = GrB_reduce(&nb_cut_edges, GrB_NULL, GrB_PLUS_MONOID_INT8, temp_v, GrB_NULL);
-
-        //Add points and complete the edges
-        infogrb = GrB_Matrix_ncols(&size_e, edges_in);
-        if (nb_cut_edges>0){
-            infogrb = GrB_Matrix_new(&addPoints, GrB_INT8, nb_cut_edges, size_e);
-            countPoint = 0;
-            infogrb = GxB_Vector_extractTuples_Vector(nz_be, vals_be, broken_edges, GrB_NULL);
-            infogrb = GrB_Vector_size(&size_v, nz_be);
-        
-            infogrb = GrB_Vector_resize(temp_v, size);
-            for (i=0; i<size_v; i++){
-                infogrb = GrB_Vector_extractElement(&be_i, nz_be, i);
-                infogrb = GrB_Vector_extractElement(&val_be_i, vals_be, i);
-                ind_2 = 2;
-                infogrb = GrB_extract(temp_v, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, be_i, GrB_NULL);
-                infogrb = GrB_Vector_extractTuples(I_index, extr_vals, &ind_2, temp_v);
-
-                if (ind_2>0){ //Check that the vector is not empty
-                    x1 = get_ith_elem_vec_pts3D(p->vertices, I_index[0]);
-                    x2 = get_ith_elem_vec_pts3D(p->vertices, I_index[1]);
-
-                    newPoint = find_intersection3D(*x1, distances[I_index[0]], *x2, distances[I_index[1]]);
-
-                    push_back_vec_pts3D(pts_copy, &newPoint);
-                    infogrb = GrB_Matrix_setElement(addPoints, -val_be_i, countPoint, be_i);
-                    countPoint += 1;
-                }
-                
-            }
-            infogrb = GrB_Matrix_new(new_edges_in, GrB_INT8, size + nb_cut_edges, size_e);
-            GxB_Matrix_concat(*new_edges_in, (GrB_Matrix[]){edges_in, addPoints}, 2, 1, GrB_NULL);
-            GrB_free(&addPoints);
-        } else {
-            infogrb = GrB_Matrix_new(new_edges_in, GrB_INT8, size, size_e);
-            GrB_Matrix_dup(new_edges_in, edges_in);
-        }
-
-        free(distances);
-        GrB_free(&pts_in);
-        GrB_free(&pts_in_m_ones);
-        GrB_free(&edges_in);
-        GrB_free(&broken_edges);
-        GrB_free(&temp_v);
-        GrB_free(&nz_be);
-        GrB_free(&vals_be);
+    free(distances);
+    GrB_free(&pts_in);
+    GrB_free(&pts_in_m_ones);
+    GrB_free(&edges_in);
+    GrB_free(&broken_edges);
+    GrB_free(&temp_v);
+    GrB_free(&nz_be);
+    GrB_free(&vals_be);
 }
 
 //[INOUT] cells_in 
@@ -537,7 +537,7 @@ static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_M
     }
 
     GrB_free(&iterator);
-    dealloc_vec_pts2D(length_edges);
+    dealloc_vec_pts2D(length_edges); free(length_edges);
     GrB_free(&fj);
     GrB_free(&ee0);
     GrB_free(&nz_fj);
@@ -639,7 +639,7 @@ static GrB_Matrix surfaces_poly3D_pef(const Vector_points3D* points, const GrB_M
         }
     }
 
-    dealloc_vec_pts3D(length_edges);
+    dealloc_vec_pts3D(length_edges); free(length_edges);
     GrB_free(&fj);
     GrB_free(&ee0);
     GrB_free(&nz_fj);

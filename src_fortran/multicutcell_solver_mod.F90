@@ -498,7 +498,7 @@ module multicutcell_solver_mod
         ys(1:nb_edges) = X(2, IXQ(2:2+nb_edges-1, i))
         zs(1:nb_edges) = X(3, IXQ(2:2+nb_edges-1, i))
         call build_grid_from_points_fortran(ys, zs, nb_edges) 
-        call compute_lambdas2d_fortran(dt, i, ptr_lambdas_arr, ptr_big_lambda_n, ptr_big_lambda_np1, mean_normal, &
+        call compute_lambdas2d_fortran(dt, ptr_lambdas_arr, ptr_big_lambda_n, ptr_big_lambda_np1, mean_normal, &
                                       is_narrowband)
 
         do j=1,nb_regions
@@ -799,8 +799,8 @@ module multicutcell_solver_mod
     normalVecz(:) = 0.0
     normalVecEdgey(:) = 0.0
     normalVecEdgez(:) = 0.0
-    call compute_normals_clipped_fortran(normalVecy, normalVecz, nb_pts_clipped, &
-                                          normalVecEdgey, normalVecEdgez, nb_edge_clipped, min_pos_Se)
+    call compute_normals_clipped_fortran(normalVecy, normalVecz, &
+                                          normalVecEdgey, normalVecEdgez, min_pos_Se)
 
 
     call compute_all_id_pt_cell(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid, nb_pts_clipped, id_pt_cell)

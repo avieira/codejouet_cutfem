@@ -4,6 +4,121 @@
 #include <stdio.h>
 
 /*--------------------------------------------------------
+                INT8
+--------------------------------------------------------*/
+Vector_int8* alloc_empty_vec_int8(){
+    return alloc_with_capacity_vec_int8(1);
+}
+
+Vector_int8* alloc_with_capacity_vec_int8(uint64_t size){
+    Vector_int8* v = (Vector_int8*)malloc(sizeof(Vector_int8));
+    v->data = (int8_t*)malloc(size*sizeof(int8_t));
+    v->size = 0;
+    v->capacity = size;
+
+    return v;
+}
+
+Vector_int8* alloc_with_init_vec_int8(const int8_t* data, uint64_t size){
+    Vector_int8* v = (Vector_int8*)malloc(sizeof(Vector_int8));
+    v->data = (int8_t*)malloc(size*sizeof(int8_t));
+    memcpy(v->data, data, size*sizeof(int8_t));
+    v->size = size;
+    v->capacity = size;
+
+    return v;
+}
+
+void double_capacity_vec_int8(Vector_int8* v){
+    v->capacity *= 2;
+    v->data = (int8_t*) realloc(v->data, v->capacity*sizeof(int8_t));
+}
+
+void push_back_vec_int8(Vector_int8* v, const int8_t* point){
+    if ((v->size == 0) || (v->data == NULL)){
+        free(v->data);
+        *v = *alloc_with_init_vec_int8(point, 1);
+    }
+    else if (v->size >= v->capacity)
+    {
+        double_capacity_vec_int8(v);
+        v->data[v->size] = *point;
+        v->size += 1;
+    }
+    else {
+        v->data[v->size] = *point;
+        v->size += 1;
+    }
+}
+
+void dealloc_vec_int8(Vector_int8* v){
+    if(v!=NULL){
+        if(v->data){
+            free(v->data);
+            v->data = NULL;
+        }
+        v->capacity = 0;
+        v->size = 0;
+    }
+}
+
+int8_t* get_ith_elem_vec_int8(const Vector_int8* v, uint64_t i){
+    int8_t* p;
+    if (i<v->size) {
+        return v->data + i;
+    } else {
+        p = (int8_t*) malloc(sizeof(int8_t));
+        *p = 0.0/0.0;
+        return p;
+    }
+}
+
+void set_ith_elem_vec_int8(Vector_int8* v, uint64_t i, const int8_t* d){
+    while(i >= v->capacity) double_capacity_vec_int8(v);
+    if (i >= v->size) v->size = i+1;
+    
+    v->data[i] = *d;
+}
+
+void copy_vec_int8(const Vector_int8* src, Vector_int8* dest){
+    if (src == NULL){
+        if (dest != NULL) {
+            free(dest->data);
+            dest->size = 0;
+            dest->capacity = 0;
+        }
+    } else {
+        if (dest != NULL){
+            free(dest->data);
+            dest->data = (int8_t*)malloc(src->capacity*sizeof(int8_t));
+            memcpy(dest->data, src->data, src->size*sizeof(int8_t));
+            dest->size = src->size;
+            dest->capacity = src->capacity;
+        }
+    }
+}
+
+void print_vec_int8(const Vector_int8* v){
+    uint64_t i;
+    int8_t* vi;
+
+    printf("v = [");
+    for (i = 0; i<v->size-1; i++){
+        vi = get_ith_elem_vec_int8(v, i);
+        printf("%ld, ", *vi);
+    }
+    vi = get_ith_elem_vec_int8(v, v->size-1);
+    printf("%ld]\n", *vi);
+}
+
+Vector_int8* cat_vec_int8(const Vector_int8* v1, const Vector_int8* v2){
+    Vector_int8 *catv = alloc_with_capacity_vec_int8(v1->size + v2->size);
+    memcpy(catv->data, v1->data, v1->size*sizeof(int8_t));
+    memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(int8_t));
+    return catv;
+}
+
+/*--------------------------------------------------------
                 LONG INT
 --------------------------------------------------------*/
 Vector_int* alloc_empty_vec_int(){
@@ -151,7 +266,7 @@ void double_capacity_vec_uint(Vector_uint* v){
     v->data = (long unsigned int*) realloc(v->data, v->capacity*sizeof(long unsigned int));
 }
 
-void push_back_vec_uint(Vector_uint* v, const long unsigned int* point){
+void push_back_vec_uint(Vector_uint* v, const uint64_t* point){
     if ((v->size == 0) || (v->data == NULL)){
         free(v->data);
         *v = *alloc_with_init_vec_uint(point, 1);
@@ -168,6 +283,33 @@ void push_back_vec_uint(Vector_uint* v, const long unsigned int* point){
     }
 }
 
+void push_back_unique_vec_uint(Vector_uint* v, const uint64_t* point){
+    uint64_t i;
+    int8_t isin;
+
+    if ((v->size == 0) || (v->data == NULL)){
+        free(v->data);
+        *v = *alloc_with_init_vec_uint(point, 1);
+        return;
+    }
+    while (v->size >= v->capacity)
+    {
+        double_capacity_vec_uint(v);
+    }
+
+    isin = 0;
+    for(i = 0; i<v->size; i++){
+        if (v->data[i] == *point){
+            isin = 1;
+            break;
+        }
+    }
+    if (!isin) {
+        v->data[v->size] = *point;
+        v->size += 1;
+    }
+}
+
 void dealloc_vec_uint(Vector_uint* v){
     if(v!=NULL){
         if(v->data){
@@ -179,18 +321,18 @@ void dealloc_vec_uint(Vector_uint* v){
     }
 }
 
-long unsigned int* get_ith_elem_vec_uint(const Vector_uint* v, uint64_t i){
-    long unsigned int* p;
+uint64_t* get_ith_elem_vec_uint(const Vector_uint* v, uint64_t i){
+    uint64_t* p;
     if (i<v->size) {
         return v->data + i;
     } else {
-        p = (long unsigned int*) malloc(sizeof(long unsigned int));
+        p = (uint64_t*) malloc(sizeof(uint64_t));
         *p = 0.0/0.0;
         return p;
     }
 }
 
-void set_ith_elem_vec_uint(Vector_uint* v, uint64_t i, long unsigned int* d){
+void set_ith_elem_vec_uint(Vector_uint* v, uint64_t i, uint64_t* d){
     while(i >= v->capacity) double_capacity_vec_uint(v);
     if (i >= v->size) v->size = i+1;
     
@@ -207,8 +349,8 @@ void copy_vec_uint(const Vector_uint* src, Vector_uint* dest){
     } else {
         if (dest != NULL){
             free(dest->data);
-            dest->data = (long unsigned int*)malloc(src->capacity*sizeof(long unsigned int));
-            memcpy(dest->data, src->data, src->size*sizeof(long unsigned int));
+            dest->data = (uint64_t*)malloc(src->capacity*sizeof(uint64_t));
+            memcpy(dest->data, src->data, src->size*sizeof(uint64_t));
             dest->size = src->size;
             dest->capacity = src->capacity;
         }
@@ -217,7 +359,7 @@ void copy_vec_uint(const Vector_uint* src, Vector_uint* dest){
 
 void print_vec_uint(const Vector_uint* v){
     uint64_t i;
-    long unsigned int* vi;
+    uint64_t* vi;
 
     printf("v = [");
     for (i = 0; i<v->size-1; i++){
@@ -233,6 +375,35 @@ Vector_uint* cat_vec_uint(const Vector_uint* v1, const Vector_uint* v2){
     memcpy(catv->data, v1->data, v1->size*sizeof(unsigned long int));
     memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(unsigned long int));
     return catv;
+}
+
+static int compare_uint(const void* a, const void* b)
+{
+   uint64_t int_a = * ( (uint64_t*) a );
+   uint64_t int_b = * ( (uint64_t*) b );
+
+   // an easy expression for comparing
+   return (int_a > int_b) - (int_a < int_b);
+}
+void sort_vec_uint(Vector_uint* v){
+    qsort(v->data, v->size, sizeof(uint64_t), compare_uint);
+}
+
+int8_t is_in_vec_uint(const Vector_uint* v, const uint64_t* point){
+    uint64_t i;
+    int8_t isin = 0;
+
+    if ((v->size == 0) || (v->data == NULL)){
+        return 0;
+    }
+
+    for(i = 0; i<v->size; i++){
+        if (v->data[i] == *point){
+            isin = 1;
+            break;
+        }
+    }
+    return isin;
 }
 
 /*--------------------------------------------------------

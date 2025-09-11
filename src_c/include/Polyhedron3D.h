@@ -15,13 +15,13 @@ typedef struct {
 } Polyhedron3D;
 
 Polyhedron3D* new_Polyhedron3D();
-//Only does shallow copy!
-Polyhedron3D* new_Polyhedron3D_vefs(Vector_points3D* vertices, GrB_Matrix* edges, GrB_Matrix* faces, Vector_int* status_face);
-//Only does shallow copy!
-Polyhedron3D* new_Polyhedron3D_vefvs(Vector_points3D* vertices, GrB_Matrix* edges, GrB_Matrix* faces, GrB_Matrix* volumes, Vector_int* status_face);
+Polyhedron3D* new_Polyhedron3D_vefs(const Vector_points3D* vertices, const GrB_Matrix* edges, const GrB_Matrix* faces, const Vector_int* status_face);
+Polyhedron3D* new_Polyhedron3D_vefvs(const Vector_points3D* vertices, const GrB_Matrix* edges, const GrB_Matrix* faces, const GrB_Matrix* volumes, const Vector_int* status_face);
 Polyhedron3D* Polyhedron3D_from_vertices(const my_real* x_v, unsigned long int n_x, const my_real* y_v, unsigned long int n_y, const my_real* z_v, unsigned long int n_z);
 //Deep copy
 void copy_Polyhedron3D(const Polyhedron3D *src, Polyhedron3D *dest);
 void dealloc_Polyhedron3D(Polyhedron3D* p);
+Polyhedron3D* fuse_polyhedrons(const Polyhedron3D* p1, const Polyhedron3D* p2);
+void clean_Polyhedron3D(const Polyhedron3D* p, Polyhedron3D** res_p);
 
 #endif

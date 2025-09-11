@@ -16,7 +16,7 @@ Polyhedron3D* new_Polyhedron3D(){
     return p;
 }
 
-Polyhedron3D* new_Polyhedron3D_vefs(Vector_points3D* vertices, GrB_Matrix* edges, GrB_Matrix* faces, Vector_int* status_face){
+Polyhedron3D* new_Polyhedron3D_vefs(const Vector_points3D* vertices, const GrB_Matrix* edges, const GrB_Matrix* faces, const Vector_int* status_face){
     GrB_Info infogrb;
     GrB_Index nb_rows;
     Polyhedron3D* p = (Polyhedron3D*) malloc(sizeof(Polyhedron3D));
@@ -38,7 +38,7 @@ Polyhedron3D* new_Polyhedron3D_vefs(Vector_points3D* vertices, GrB_Matrix* edges
     return p;
 }
 
-Polyhedron3D* new_Polyhedron3D_vefvs(Vector_points3D* vertices, GrB_Matrix* edges, GrB_Matrix* faces, GrB_Matrix* volumes, Vector_int* status_face){
+Polyhedron3D* new_Polyhedron3D_vefvs(const Vector_points3D* vertices, const GrB_Matrix* edges, const GrB_Matrix* faces, const GrB_Matrix* volumes, const Vector_int* status_face){
     Polyhedron3D* p = (Polyhedron3D*) malloc(sizeof(Polyhedron3D));
 
     p->vertices = alloc_empty_vec_pts3D();
@@ -704,13 +704,19 @@ Polyhedron3D* Polyhedron3D_from_vertices(const my_real* x_v, unsigned long int n
 }
 
 void copy_Polyhedron3D(const Polyhedron3D *src, Polyhedron3D *dest){
+    GrB_Index nb_pts, nb_edges, nb_faces, nb_volumes;
+
     if (src == NULL){
         if (dest != NULL) {
-            dealloc_vec_pts3D(dest->vertices);
+            if(dest->vertices){
+                dealloc_vec_pts3D(dest->vertices); free(dest->vertices);
+            }
             GrB_free(dest->edges);
             GrB_free(dest->faces);
             GrB_free(dest->volumes);
-            dealloc_vec_int(dest->status_face);
+            if(dest->status_face){
+                dealloc_vec_int(dest->status_face); free(dest->status_face);
+            }
             dest->vertices = NULL;
             dest->edges = NULL;
             dest->faces = NULL;
@@ -719,13 +725,42 @@ void copy_Polyhedron3D(const Polyhedron3D *src, Polyhedron3D *dest){
         }
     } else {
         if (dest != NULL){
-            GrB_free(dest->edges);
-            GrB_free(dest->faces);
-            GrB_free(dest->volumes);
+            //GrB_free(dest->edges);
+            //GrB_free(dest->faces);
+            //GrB_free(dest->volumes);
+            GrB_Matrix_nrows(&nb_pts, *(src->edges));
+            GrB_Matrix_ncols(&nb_edges, *(src->edges));
+            GrB_Matrix_ncols(&nb_faces, *(src->faces));
+            GrB_Matrix_ncols(&nb_volumes, *(src->volumes));
+            if (dest->edges) {
+                GrB_Matrix_resize(*(dest->edges), nb_pts, nb_edges);
+            } else {
+                dest->edges = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+                GrB_Matrix_new(dest->edges, GrB_INT8, nb_pts, nb_edges);
+            }
+            if (dest->faces){
+                GrB_Matrix_resize(*(dest->faces), nb_edges, nb_faces);
+            } else {
+                dest->faces = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+                GrB_Matrix_new(dest->faces, GrB_INT8, nb_edges, nb_faces);
+            }
+            if (dest->volumes){
+                GrB_Matrix_resize(*(dest->volumes), nb_faces, nb_volumes);
+            } else {
+                dest->volumes = (GrB_Matrix*) malloc(sizeof(GrB_Matrix));
+                GrB_Matrix_new(dest->volumes, GrB_INT8, nb_faces, nb_volumes);
+            }
+            if (!dest->vertices){
+                dest->vertices = alloc_empty_vec_pts3D();
+            }
+
             copy_vec_pts3D(src->vertices, dest->vertices);
             GrB_Matrix_dup(dest->edges, *(src->edges));
             GrB_Matrix_dup(dest->faces, *(src->faces));
             GrB_Matrix_dup(dest->volumes, *(src->volumes));
+            if (!dest->status_face){
+                dest->status_face = alloc_empty_vec_int();
+            }
             copy_vec_int(src->status_face, dest->status_face);
         }
     }
@@ -733,10 +768,223 @@ void copy_Polyhedron3D(const Polyhedron3D *src, Polyhedron3D *dest){
 
 void dealloc_Polyhedron3D(Polyhedron3D* p){
     if(p){
-        dealloc_vec_pts3D(p->vertices);
+        if(p->vertices){
+            dealloc_vec_pts3D(p->vertices); free(p->vertices);
+        }
         GrB_free(p->edges);
+        if(p->edges) free(p->edges);
         GrB_free(p->faces);
+        if(p->faces) free(p->faces);
         GrB_free(p->volumes);
-        dealloc_vec_int(p->status_face);
+        if(p->volumes) free(p->volumes);
+        if(p->status_face){
+            dealloc_vec_int(p->status_face); free(p->status_face);
+        }
     }
+}
+
+Polyhedron3D* fuse_polyhedrons(const Polyhedron3D* p1, const Polyhedron3D* p2){
+    Vector_points3D* fused_vertices;
+    GrB_Matrix *fused_edges = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
+    GrB_Matrix *fused_faces = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
+    GrB_Matrix *fused_volumes = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
+    Vector_int *fused_status;
+    GrB_Index nrows1, ncols1, nrows2, ncols2;
+    GrB_Matrix zeros1, zeros2;
+    Polyhedron3D* res_p;
+
+    fused_vertices = cat_vec_pts3D(p1->vertices, p2->vertices);
+    fused_status = cat_vec_int(p1->status_face, p2->status_face);
+
+    GrB_Matrix_nrows(&nrows1, *(p1->edges));
+    GrB_Matrix_ncols(&ncols1, *(p1->edges));
+    GrB_Matrix_nrows(&nrows2, *(p2->edges));
+    GrB_Matrix_ncols(&ncols2, *(p2->edges));
+    GrB_Matrix_new(&zeros1, GrB_INT8, nrows1, ncols2);
+    GrB_Matrix_new(&zeros2, GrB_INT8, nrows2, ncols1);
+    GrB_Matrix_new(fused_edges, GrB_INT8, nrows1+nrows2, ncols1+ncols2);
+    GxB_Matrix_concat(*fused_edges, (GrB_Matrix[]){*(p1->edges), zeros1, zeros2, *(p2->edges)}, 2, 2, GrB_NULL);
+    //fused_edges = [[p1.edges spzeros(Int8, size(p1.edges, 1), size(p2.edges, 2))];
+    //                [spzeros(Int8, size(p2.edges, 1), size(p1.edges, 2)) p2.edges]];
+
+    GrB_Matrix_nrows(&nrows1, *(p1->faces));
+    GrB_Matrix_ncols(&ncols1, *(p1->faces));
+    GrB_Matrix_nrows(&nrows2, *(p2->faces));
+    GrB_Matrix_ncols(&ncols2, *(p2->faces));
+    GrB_Matrix_resize(zeros1, nrows1, ncols2);
+    GrB_Matrix_resize(zeros2, nrows2, ncols1);
+    GrB_Matrix_new(fused_faces, GrB_INT8, nrows1+nrows2, ncols1+ncols2);
+    GxB_Matrix_concat(*fused_faces, (GrB_Matrix[]){*(p1->faces), zeros1, zeros2, *(p2->faces)}, 2, 2, GrB_NULL);
+    //fused_faces = [[p1.faces  spzeros(Int8, size(p1.faces, 1), size(p2.faces, 2))];
+    //                [spzeros(Int8, size(p2.faces, 1), size(p1.faces, 2)) p2.faces]];
+    //fused_pressure = vcat(p1.pressure_edge, p2.pressure_edge) //TODO Report this
+
+    GrB_Matrix_nrows(&nrows1, *(p1->volumes));
+    GrB_Matrix_ncols(&ncols1, *(p1->volumes));
+    GrB_Matrix_nrows(&nrows2, *(p2->volumes));
+    GrB_Matrix_ncols(&ncols2, *(p2->volumes));
+    GrB_Matrix_resize(zeros1, nrows1, ncols2);
+    GrB_Matrix_resize(zeros2, nrows2, ncols1);
+    GrB_Matrix_new(fused_volumes, GrB_INT8, nrows1+nrows2, ncols1+ncols2);
+    GxB_Matrix_concat(*fused_volumes, (GrB_Matrix[]){*(p1->volumes), zeros1, zeros2, *(p2->volumes)}, 2, 2, GrB_NULL);
+
+    res_p = new_Polyhedron3D_vefvs(fused_vertices, fused_edges, fused_faces, fused_volumes, fused_status);
+    
+    GrB_free(&zeros1);
+    GrB_free(&zeros2);
+    dealloc_vec_pts3D(fused_vertices); free(fused_vertices);
+    GrB_free(fused_edges); free(fused_edges);
+    GrB_free(fused_faces); free(fused_faces);
+    GrB_free(fused_volumes); free(fused_volumes);
+    dealloc_vec_int(fused_status); free(fused_status);
+    
+    return res_p;
+}
+
+void clean_Polyhedron3D(const Polyhedron3D* p, Polyhedron3D** res_p){
+    GrB_Index k, i_v, i, j, j_f;
+    GrB_Vector vj, extr_vals_vj, face_indices;
+    GrB_Vector fj, extr_vals_fj, grb_edge_indices;
+    GrB_Vector ej, extr_vals_ej, pt_indices;
+    Vector_uint* ind_kept_pts, *edge_indices;
+    Vector_points3D* new_vertices;
+    GrB_Matrix new_edges, new_faces, new_volumes;
+    Vector_int *new_status_face;
+    GrB_Vector grb_ind_kept_pts, justone;
+    GrB_Info infogrb;
+    GrB_Index nb_edges, nb_faces, nb_pts, nb_volumes;
+    GrB_Index size_face_indices, size_grb_edge_indices, size_pt_indices, val;
+    uint64_t ind_pt;
+    GrB_Index ncols_new_edges, ncols_new_faces, ell;
+    uint64_t nrows_new_edges;
+    Polyhedron3D* new_p = NULL;
+    Polyhedron3D* copy_p = new_Polyhedron3D();
+
+    GrB_Matrix_ncols(&nb_volumes, *(p->volumes));
+    GrB_Matrix_ncols(&nb_faces, *(p->faces));
+    GrB_Matrix_ncols(&nb_edges, *(p->edges));
+    GrB_Matrix_nrows(&nb_pts, *(p->edges));
+    ind_kept_pts = alloc_empty_vec_uint();
+    new_vertices = alloc_empty_vec_pts3D();
+    edge_indices = alloc_empty_vec_uint();
+    GrB_Matrix_new(&new_edges, GrB_INT8, 1, 1);
+    GrB_Vector_new(&grb_ind_kept_pts, GrB_UINT64, 1);
+    GrB_Matrix_new(&new_faces, GrB_INT8, 1, 1);
+    GrB_Vector_new(&justone, GrB_UINT64, 1);
+    GrB_Matrix_new(&new_volumes, GrB_INT8, 1, 1);
+    new_status_face = alloc_with_capacity_vec_int(1);
+    GrB_Vector_new(&vj, GrB_INT8, nb_faces);
+    GrB_Vector_new(&face_indices, GrB_UINT64, nb_faces);
+    GrB_Vector_new(&extr_vals_vj, GrB_INT8, nb_faces);
+    GrB_Vector_new(&fj, GrB_INT8, nb_edges);
+    GrB_Vector_new(&grb_edge_indices, GrB_UINT64, nb_edges);
+    GrB_Vector_new(&extr_vals_fj, GrB_INT8, nb_edges);
+    GrB_Vector_new(&ej, GrB_INT8, nb_pts);
+    GrB_Vector_new(&pt_indices, GrB_UINT64, nb_pts);
+    GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_pts);
+
+    for(k=0; k<nb_volumes; k++){
+        infogrb = GrB_extract(vj, GrB_NULL, GrB_NULL, *(p->volumes), GrB_ALL, 1, i, GrB_NULL); //Get indices of faces composing volume k
+        infogrb = GxB_Vector_extractTuples_Vector(face_indices, extr_vals_vj, vj, GrB_NULL);
+        infogrb = GrB_Vector_size(&size_face_indices, face_indices);
+        ind_kept_pts->size = 0;
+        for (i_v=0; i_v<nb_faces; i_v++){
+            infogrb = GrB_Vector_extractElement(&i, face_indices, i_v);
+
+            infogrb = GrB_extract(fj, GrB_NULL, GrB_NULL, *(p->faces), GrB_ALL, 1, i, GrB_NULL); //Get indices of edges composing face i
+            infogrb = GxB_Vector_extractTuples_Vector(grb_edge_indices, extr_vals_fj, fj, GrB_NULL);
+            infogrb = GrB_Vector_size(&size_grb_edge_indices, grb_edge_indices);
+
+            for(j_f=0; j_f<size_grb_edge_indices; j_f++){
+                infogrb = GrB_Vector_extractElement(&j, grb_edge_indices, j_f);
+                push_back_unique_vec_uint(edge_indices, &j);
+                infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, j, GrB_NULL); //Get indices of points composing edge j
+                infogrb = GxB_Vector_extractTuples_Vector(pt_indices, extr_vals_ej, ej, GrB_NULL);
+                infogrb = GrB_Vector_size(&size_pt_indices, pt_indices);
+                if(size_pt_indices>0){
+                    infogrb = GrB_Vector_extractElement(&val, pt_indices, 0);
+                    push_back_unique_vec_uint(ind_kept_pts, &val);
+                    
+                    infogrb = GrB_Vector_extractElement(&val, pt_indices, 1);
+                    push_back_unique_vec_uint(ind_kept_pts, &val);
+                }
+            }
+        }
+
+        sort_vec_uint(ind_kept_pts);
+        sort_vec_uint(edge_indices);
+        if (ind_kept_pts->size > 0){
+            ind_pt = *get_ith_elem_vec_uint(ind_kept_pts, 0);
+            set_ith_elem_vec_pts3D(new_vertices, 0, get_ith_elem_vec_pts3D(p->vertices, ind_pt));
+            for (j_f=1; j_f<ind_kept_pts->size; j_f++){
+                ind_pt = *get_ith_elem_vec_uint(ind_kept_pts, j_f);
+                set_ith_elem_vec_pts3D(new_vertices, j_f, get_ith_elem_vec_pts3D(p->vertices, ind_pt));
+            }
+        }
+        
+        //new_edges = p.edges[ind_kept_pts, grb_edge_indices]
+        //GrB_reduce(&ncols_new_edges, GrB_NULL, GrB_MAX_MONOID_UINT64, grb_edge_indices, GrB_NULL);
+        //GrB_reduce(&ncols_new_faces, GrB_NULL, GrB_MAX_MONOID_UINT64, face_indices, GrB_NULL);
+        if (ind_kept_pts->size>1){
+            ncols_new_edges = size_grb_edge_indices;
+            ncols_new_faces = size_face_indices;
+            nrows_new_edges = *get_ith_elem_vec_uint(ind_kept_pts, ind_kept_pts->size-1);
+            GrB_Vector_resize(grb_ind_kept_pts, ind_kept_pts->size);
+            for(ell=0; ell<ind_kept_pts->size; ell++){
+                GrB_Vector_setElement(grb_ind_kept_pts, *get_ith_elem_vec_uint(ind_kept_pts, ell), ell);
+            }
+            GrB_Vector_resize(grb_edge_indices, edge_indices->size);
+            for (j_f=0; j_f<edge_indices->size; j_f++){
+                GrB_Vector_setElement(grb_edge_indices, *get_ith_elem_vec_uint(edge_indices, j_f), j_f);
+            }
+            GrB_Matrix_resize(new_edges, nrows_new_edges, ncols_new_edges);
+            GrB_extract(new_edges, GrB_NULL, GrB_NULL, *(p->edges), grb_ind_kept_pts, grb_edge_indices, GrB_NULL);
+
+            //new_faces = p.faces[grb_edge_indices, i]
+            GrB_Matrix_resize(new_faces, nrows_new_edges, ncols_new_faces);
+            GrB_extract(new_faces, GrB_NULL, GrB_NULL, *(p->faces), grb_edge_indices, face_indices, GrB_NULL);
+            GrB_Matrix_resize(new_faces, ncols_new_faces, 1);
+            GrB_Vector_setElement(justone, 0, k);
+            GrB_extract(new_volumes, GrB_NULL, GrB_NULL, *(p->volumes), face_indices, justone, GrB_NULL);
+        
+
+            if (new_status_face){
+                dealloc_vec_int(new_status_face);
+                free(new_status_face);
+            }
+            new_status_face = alloc_with_capacity_vec_int(ncols_new_faces);
+            for(j_f = 0; j_f < ncols_new_faces; j_f++){
+                GrB_Vector_extractElement(&j, face_indices, j_f);
+                set_ith_elem_vec_int(new_status_face, j_f, get_ith_elem_vec_int(p->status_face, j));
+            }
+
+            if (new_p){ //Faces already exist
+                copy_Polyhedron3D(new_p, copy_p);
+                dealloc_Polyhedron3D(new_p);
+                new_p = fuse_polyhedrons(copy_p, new_Polyhedron3D_vefvs(new_vertices, &new_edges, &new_faces, &new_volumes, new_status_face));
+            } else { //First face created
+                new_p = new_Polyhedron3D_vefvs(new_vertices, &new_edges, &new_faces, &new_volumes, new_status_face);
+            }
+        }
+    }
+
+    if(*res_p)
+        dealloc_Polyhedron3D(*res_p);
+    *res_p = new_p;
+
+    dealloc_Polyhedron3D(copy_p);free(copy_p);
+    dealloc_vec_uint(edge_indices);free(edge_indices);
+    dealloc_vec_uint(ind_kept_pts);free(ind_kept_pts);
+    dealloc_vec_int(new_status_face);free(new_status_face);
+    dealloc_vec_pts3D(new_vertices);free(new_vertices);
+    GrB_free(&new_edges);
+    GrB_free(&new_faces);
+    GrB_free(&grb_ind_kept_pts);
+    GrB_free(&justone);
+    GrB_free(&fj);
+    GrB_free(&extr_vals_fj);
+    GrB_free(&grb_edge_indices);
+    GrB_free(&ej);
+    GrB_free(&extr_vals_ej);
+    GrB_free(&pt_indices);
 }

@@ -105,3 +105,44 @@ void print_vec_double(const Vector_double* v){
     vi = get_ith_elem_vec_double(v, v->size-1);
     printf("%.3e]\n", *vi);
 }
+
+typedef struct {
+    my_real r;
+    uint64_t i;
+} Indexed_my_real;
+
+
+static int compare_reals(const void*a, const void *b){
+    Indexed_my_real* r1 = (Indexed_my_real*) a;
+    Indexed_my_real* r2 = (Indexed_my_real*) b;
+
+    if (r1->r < r2->r){
+        return -1;
+    } else if (r1->r > r2->r) {
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
+/// @brief Sort `src`, giving the permutation to sort it (meaning sorted_array = src[permutation_inds]).
+/// @param src [IN] Array to sort.
+/// @param sorted_array [OUT] Sorted array.
+/// @param permutation_inds [OUT] Sorting permutation.
+void sort_vec_double(const Vector_double* src, Vector_double* sorted_array, Vector_uint* permutation_inds){
+    uint64_t i;
+    Indexed_my_real* indxd_arr = (Indexed_my_real*)malloc(src->size*sizeof(Indexed_my_real));
+
+    for(i=0; i<src->size; i++){
+        indxd_arr[i] = (Indexed_my_real){src->data[i], i};
+    }
+
+    qsort(indxd_arr, src->size, sizeof(Indexed_my_real), compare_reals);
+
+    for(i=0; i<src->size; i++){
+        set_ith_elem_vec_double(sorted_array, i, &(indxd_arr[i].r));
+        set_ith_elem_vec_uint(permutation_inds, i, &(indxd_arr[i].i));
+    }
+
+    free(indxd_arr);
+}

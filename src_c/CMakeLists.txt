@@ -14,6 +14,11 @@ set(all_c_files
               Polyhedron3D.c
               update_clipped.c
               vector_int.c
+              edge_collision.c
+              vector_indices_intersection.c
+              AStar.c
+              NodeWithCost_OrdSet.c
+              polygon_fusion_and_split.c
               CACHE INTERNAL "")
 add_library(mylib_c STATIC "${all_c_files}")
 target_link_libraries(mylib_c GraphBLAS)

@@ -1,11 +1,16 @@
 #include "update_clipped.h"
 #include <string.h>
+#include "edge_collision.h"
+#include "polygon_fusion_and_split.h"
+#include "AStar.h"
 
+//Project d in [min, max].
 static my_real clamp(my_real d, my_real min, my_real max) {
   const my_real t = d < min ? min : d;
   return t > max ? max : t;
 }
 
+//Compute the angle formed by the two segments [e1_ext1, e1_ext2] and [e2_ext1, e2_ext2]
 static my_real compute_angle_between_edges2D(Point2D *e1_ext1, Point2D *e1_ext2, Point2D *e2_ext1, Point2D *e2_ext2){
         my_real n1x, n1y, n2x, n2y;
         my_real dotp, norm_n1, norm_n2;
@@ -316,13 +321,444 @@ static void detect_pts_to_delete(Polygon2D* p, my_real dt, const my_real *vsx, c
     infogrb = GrB_free(&inds_pts_edge0);
     infogrb = GrB_free(&inds_pts_edge1);
     infogrb = GrB_free(&I_vec);
-    dealloc_vec_int64(list_inds_del1);
-    dealloc_vec_int64(list_inds_del2);
-    dealloc_vec_int64(list_inds_del);
+    dealloc_vec_int64(list_inds_del1); free(list_inds_del1);
+    dealloc_vec_int64(list_inds_del2); free(list_inds_del2);
+    dealloc_vec_int64(list_inds_del); free(list_inds_del);
     GxB_Iterator_free(&iterator);
 }
 
+//Delete edge i_e and split it in two new edges passing through new_pt.
+//Actually, it modifies edge i_e and only creates a new one...
+static void split_edge(Polygon2D* p, uint64_t i_e, const Point2D *new_pt){
+    GrB_Index nb_edge;
+    GrB_Info infogrb;
+    GrB_Vector ej, extr_vals_ej, inds_pts_edge;
+    GrB_Index i_e0_pt0, i_e0_pt1;
+    uint64_t ind_new_pt;
+    int8_t val;
+    GrB_Matrix new_line, new_edge;
+    GrB_Index nb_faces;
 
+    GrB_Matrix_ncols(&nb_edge, *(p->edges));
+    GrB_Matrix_ncols(&nb_faces, *(p->faces));
+    infogrb = GrB_Vector_new(&ej, GrB_INT8, 2);
+    infogrb = GrB_Vector_new(&extr_vals_ej, GrB_INT8, 2);
+    infogrb = GrB_Vector_new(&inds_pts_edge, GrB_UINT64, 2);
+
+    //Extract the column i_e of p.edges, and take the two first non-zero values.
+    infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, i_e, GrB_NULL);
+    infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge, extr_vals_ej, ej, GrB_NULL);
+    infogrb = GrB_Vector_extractElement(&i_e0_pt0, inds_pts_edge, 0);
+    infogrb = GrB_Vector_extractElement(&i_e0_pt1, inds_pts_edge, 1);
+    infogrb = GrB_Vector_extractElement(&val, extr_vals_ej, 0);
+
+    //pts_indices = rowvals(p.edges)
+    //inds_pts_edge = pts_indices[nzrange(p.edges, i_e)]
+
+    push_back_vec_pts2D(p->vertices, new_pt);
+    ind_new_pt = p->vertices->size;
+
+    infogrb = GrB_Matrix_removeElement(*(p->edges), i_e0_pt0, i_e);
+
+    infogrb = GrB_Matrix_new(&new_line, GrB_INT8, 1, nb_edge);
+    infogrb = GrB_Matrix_new(&new_edge, GrB_INT8, ind_new_pt, 1);
+    infogrb = GrB_Matrix_setElement(new_line, val, 0, i_e);
+    infogrb = GrB_Matrix_setElement(new_edge, val, i_e0_pt0, 0);
+    infogrb = GrB_Matrix_setElement(new_edge, -val, ind_new_pt, 0);
+    
+    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){*(p->edges), new_line}, 2, 1, GrB_NULL); //edges = [edges ; new_line]
+    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){*(p->edges), new_edge}, 1, 2, GrB_NULL); //edges = [edges   new_edge]
+
+    infogrb = GrB_Matrix_resize(new_line, 1, nb_faces);
+    infogrb = GrB_extract(new_line, GrB_NULL, GrB_NULL, *(p->faces), (GrB_Index[]){i_e}, 1, GrB_ALL, 1,GrB_NULL); 
+    infogrb = GxB_Matrix_concat(*(p->faces), (GrB_Matrix[]){*(p->faces), new_line}, 2, 1, GrB_NULL); //faces = [faces ; faces[i_e,:]]
+
+    //push!(p.pressure_edge, p.pressure_edge[i_e]) //TODO Report this
+    //push!(p.status_edge, p.status_edge[i_e]) //TODO Report this
+    push_back_vec_int(p->status_edge, get_ith_elem_vec_int(p->status_edge, i_e));
+
+    GrB_Vector_free(&ej);
+    GrB_Vector_free(&extr_vals_ej);
+    GrB_Vector_free(&inds_pts_edge);
+    GrB_Matrix_free(&new_line);
+    GrB_Matrix_free(&new_edge);
+}
+
+//The common point of edges ind_e0_fused and ind_e1_fused (both in face ind_face) is suppressed, and the edges are transformed to become only one.
+static void fuse_points(Polygon2D *p, int64_t ind_e0_fused, int64_t ind_e1_fused, int64_t ind_face){
+    GrB_Info infogrb;
+    GrB_Vector ej, extr_vals_ej, inds_pts_edge0, inds_pts_edge1;
+    GrB_Index i_e0_pt0, i_e0_pt1, i_e1_pt0, i_e1_pt1;
+    uint64_t ind_pt_del, ind_pt1, ind_pt2;
+    int8_t val;
+
+    infogrb = GrB_Vector_new(&ej, GrB_INT8, 2);
+    infogrb = GrB_Vector_new(&extr_vals_ej, GrB_INT8, 2);
+    infogrb = GrB_Vector_new(&inds_pts_edge0, GrB_UINT64, 2);
+    infogrb = GrB_Vector_new(&inds_pts_edge1, GrB_UINT64, 2);
+
+    if (ind_e1_fused != ind_e0_fused) { //one edge to suppress, the other one is modified.
+        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ind_e0_fused, GrB_NULL);
+        infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge0, extr_vals_ej, ej, GrB_NULL);
+        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ind_e1_fused, GrB_NULL);
+        infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge1, extr_vals_ej, ej, GrB_NULL);
+        //Find the index of the points composing these two edges
+        infogrb = GrB_Vector_extractElement(&i_e0_pt0, inds_pts_edge0, 0);
+        infogrb = GrB_Vector_extractElement(&i_e0_pt1, inds_pts_edge0, 1);
+        infogrb = GrB_Vector_extractElement(&i_e1_pt0, inds_pts_edge1, 0);
+        infogrb = GrB_Vector_extractElement(&i_e1_pt1, inds_pts_edge1, 1);
+
+        //The point in common in these two edges is the point to delete.
+        if ((i_e0_pt0 == i_e1_pt0) || (i_e0_pt0 == i_e1_pt1)){
+            ind_pt_del = i_e0_pt0;
+            ind_pt1 = i_e0_pt1;
+        } else {
+            ind_pt_del = i_e0_pt1;
+            ind_pt1 = i_e0_pt0;
+        }
+        if (i_e1_pt0 == ind_pt_del)
+            ind_pt2 = i_e1_pt1;
+        else
+            ind_pt2 = i_e1_pt0;
+        
+        infogrb = GrB_Matrix_extractElement(&val, *(p->edges), ind_pt_del, ind_e0_fused);
+        infogrb = GrB_Matrix_setElement(*(p->edges), val, ind_pt2, ind_e0_fused);
+        infogrb = GrB_Matrix_removeElement(*(p->edges), ind_pt_del, ind_e0_fused);
+        infogrb = GrB_Matrix_removeElement(*(p->edges), ind_pt2, ind_e1_fused);
+        infogrb = GrB_Matrix_removeElement(*(p->edges), ind_pt_del, ind_e1_fused);
+
+        infogrb = GrB_Matrix_removeElement(*(p->faces), ind_e1_fused, ind_face);
+    } else { //only one edge: means it must be suppressed.
+        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ind_e0_fused, GrB_NULL);
+        infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge0, extr_vals_ej, ej, GrB_NULL);
+        infogrb = GrB_Vector_extractElement(&i_e0_pt0, inds_pts_edge0, 0);
+        infogrb = GrB_Vector_extractElement(&i_e0_pt1, inds_pts_edge0, 1);
+
+        //inds_pts_edge = pts_indices[nzrange(p.edges, ind_e1_fused)]
+        infogrb = GrB_Matrix_removeElement(*(p->edges), i_e0_pt0, ind_e1_fused);
+        infogrb = GrB_Matrix_removeElement(*(p->edges), i_e0_pt1, ind_e1_fused);
+
+        infogrb = GrB_Matrix_removeElement(*(p->faces), ind_e1_fused, ind_face);
+    }
+
+    GrB_Vector_free(&ej);
+    GrB_Vector_free(&extr_vals_ej);
+    GrB_Vector_free(&inds_pts_edge0);
+    GrB_Vector_free(&inds_pts_edge1);
+}
+
+//The vertices of polygon pn (at time tn) are supplemented by vertices at time tn+dt (in vertices_tnp1) backpropagated in time.
+//These new vertices added in pn are the points of intersection detected at time tn+dt and propagated back at time tn.
+static void backpropagate_pts(Polygon2D *pn, Vector_points2D* vertices_tnp1,\
+    const Vector_points2D* pts_intersec, const Vector_uint* edge_intersect1, const Vector_uint* edge_intersect2, Vector_int8* pt_in_or_out){
+
+    uint64_t i, ie, ipts1, ipts2, iptp, iptn;
+    GrB_Index nb_pts;
+    GrB_Vector ej, ipts, extr_vals_ej;
+    my_real theta;
+    Point2D new_pt;
+    int8_t mark8 = -2;
+    const Point2D *ptp, *ptn;
+
+    GrB_Matrix_nrows(&nb_pts, *(pn->edges));
+    GrB_Vector_new(&ej, GrB_INT8, nb_pts);
+    GrB_Vector_new(&ipts, GrB_UINT64, nb_pts);
+    GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_pts);
+
+    for(i=0; i<edge_intersect1->size; i++){
+        //ind_pts = rowvals(pn.edges)
+        //ipts = ind_pts[nzrange(pn.edges, ie)]
+        ie = *get_ith_elem_vec_uint(edge_intersect1, i);
+        GrB_extract(ej, GrB_NULL, GrB_NULL, *(pn->edges), GrB_ALL, 1, ie, GrB_NULL); 
+        GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+        GrB_Vector_extractElement(&ipts1, ipts, 0);
+        GrB_Vector_extractElement(&ipts2, ipts, 1);
+        if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) > 0){
+            iptp = ipts1;
+            iptn = ipts2;
+        } else {
+            iptp = ipts2;
+            iptn = ipts1;
+        }
+
+        ptp = get_ith_elem_vec_pts2D(vertices_tnp1, iptp);
+        ptn = get_ith_elem_vec_pts2D(vertices_tnp1, iptn);
+        theta = compute_barycentric_coord(*get_ith_elem_vec_pts2D(pts_intersec, i), *ptp, *ptn);
+
+        ptp = get_ith_elem_vec_pts2D(pn->vertices, iptp);
+        ptn = get_ith_elem_vec_pts2D(pn->vertices, iptn);
+        new_pt.x = (1-theta)*(ptp->x) + theta*ptn->x;
+        new_pt.y = (1-theta)*(ptp->y) + theta*ptn->y;
+
+        split_edge(pn, ie, &new_pt);
+        push_back_vec_pts2D(vertices_tnp1, get_ith_elem_vec_pts2D(pts_intersec, i));
+        push_back_vec_int8(pt_in_or_out, &mark8);
+
+        ie = *get_ith_elem_vec_uint(edge_intersect2, i);
+        GrB_extract(ej, GrB_NULL, GrB_NULL, *(pn->edges), GrB_ALL, 1, ie, GrB_NULL); 
+        GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+        GrB_Vector_extractElement(&ipts1, ipts, 0);
+        GrB_Vector_extractElement(&ipts2, ipts, 1);
+        if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) > 0){
+            iptp = ipts1;
+            iptn = ipts2;
+        } else {
+            iptp = ipts2;
+            iptn = ipts1;
+        }
+
+        ptp = get_ith_elem_vec_pts2D(vertices_tnp1, iptp);
+        ptn = get_ith_elem_vec_pts2D(vertices_tnp1, iptn);
+        theta = compute_barycentric_coord(*get_ith_elem_vec_pts2D(pts_intersec, i), *ptp, *ptn);
+
+        ptp = get_ith_elem_vec_pts2D(pn->vertices, iptp);
+        ptn = get_ith_elem_vec_pts2D(pn->vertices, iptn);
+        new_pt.x = (1-theta)*(ptp->x) + theta*ptn->x;
+        new_pt.y = (1-theta)*(ptp->y) + theta*ptn->y;
+
+        split_edge(pn, ie, &new_pt);
+        push_back_vec_pts2D(vertices_tnp1, get_ith_elem_vec_pts2D(pts_intersec, i));
+        push_back_vec_int8(pt_in_or_out, &mark8);
+    }
+
+    GrB_free(&ej);
+    GrB_free(&ipts);
+    GrB_free(&extr_vals_ej);
+}
+
+//Project pt on edge [ext1, ext2]
+static Point2D project_on_edge(const Point2D* pt, const Point2D* ext1, const Point2D* ext2){
+    Point2D tangentVec, pt_prime, diffpt;
+    my_real nt, bottom, up, left, right;
+
+    tangentVec.x = ext2->x - ext1->x;
+    tangentVec.y = ext2->y - ext1->y;
+    nt = norm_pt2D(tangentVec);   
+
+    if (nt>0){
+        tangentVec.x /= nt;
+        tangentVec.y /= nt;
+    }
+
+    diffpt.x = pt->x - ext1->x;
+    diffpt.y = pt->y - ext1->y;
+    nt = scalProd2D(diffpt, tangentVec);
+    pt_prime.x = ext1->x + nt*tangentVec.x;
+    pt_prime.y = ext1->y + nt*tangentVec.y;
+
+    if (ext1->y < ext2->y){
+        bottom = ext1->y; up = ext2->y;
+    } else {
+        up = ext1->y; bottom = ext2->y;
+    }
+    if (ext1->x < ext2->x){
+        left = ext1->x; right = ext2->x;
+    } else {
+        right = ext1->x; left = ext2->x;
+    }
+
+    if (left < right){
+        if (!((pt_prime.x >= left) && (pt_prime.x <= right))){
+            if (pt_prime.x < left){
+                pt_prime.x = left;
+            } else { //pt_prime.x > right
+                pt_prime.x = right;
+            }
+        }
+    }
+    if (bottom < up){
+        if (!((pt_prime.y >= bottom) && (pt_prime.y <= up))){
+            if (pt_prime.y < bottom){
+                pt_prime.y = bottom;
+            } else { //pt_prime.y > up
+                pt_prime.y = up;
+            }
+        }
+    }
+
+    return pt_prime;
+}
+
+//Marks all points between two intersections.
+//pair_intersection will be an array of size (nb_points x 2). For each line:
+// - if -1 : the point is not part of a path linking two intersection points and that will be suppressed.
+// - otherwise : the point is part of a path linking two intersection points and the two columns indicates the indices of the two intersection (as ordered in edge_intersect*).
+static void find_pair_intersection(const Polygon2D* p, \
+                            const Vector_uint* edge_intersect1, const Vector_uint* edge_intersect2, const Vector_int8* pt_in_or_out,\
+                            Array_int** pair_intersection){
+    uint64_t ie, je, j, nb_intersec, ie1, je1;
+    GrB_Index i, k, ipts1, ipts2, nb_pts;
+    int64_t val = -1;
+    Vector_uint* forbidden_edges;
+    GrB_Vector ej, ipts, extr_vals_ej;
+    Vector_uint *listEdges = alloc_empty_vec_uint();
+    Vector_uint *listNodes = alloc_empty_vec_uint();
+
+    GrB_Matrix_nrows(&nb_pts, *(p->edges));
+    GrB_Vector_new(&ej, GrB_INT8, nb_pts);
+    GrB_Vector_new(&ipts, GrB_UINT64, nb_pts);
+    GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_pts);
+
+    *pair_intersection = alloc_with_capacity_arr_int(pt_in_or_out->size, 2);
+    for(ie=0; ie<pt_in_or_out->size; ie++){
+        for(j=0; j<2; j++){
+            set_ijth_elem_arr_int(*pair_intersection, ie, j, &val);
+        }
+    }
+
+    forbidden_edges = cat_vec_uint(edge_intersect1, edge_intersect2);
+
+    nb_intersec = edge_intersect1->size;
+    //ind_pts = rowvals(p.edges)
+    for (ie=0; ie<nb_intersec; ie++){
+        //First edge of first intersection
+        ie1 = *get_ith_elem_vec_uint(edge_intersect1, ie);
+        //krange = ind_pts[nzrange(p.edges, ie1)]
+        GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ie1, GrB_NULL); 
+        GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+        GrB_Vector_extractElement(&ipts1, ipts, 0);
+        GrB_Vector_extractElement(&ipts2, ipts, 1);
+
+        if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
+            i = ipts1;
+        } else if (*get_ith_elem_vec_int8(pt_in_or_out, ipts2) < 0) {
+            i = ipts2;
+        } else {
+            i = UINT64_MAX;
+        }
+        if (i < UINT64_MAX){
+            for (je = ie+1; j<nb_intersec; je++){
+                //First edge of second intersection
+                je1 = *get_ith_elem_vec_uint(edge_intersect1, je);
+                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
+                GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+                GrB_Vector_extractElement(&ipts1, ipts, 0);
+                GrB_Vector_extractElement(&ipts2, ipts, 1);
+
+                if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
+                    j = ipts1;
+                } else if (*get_ith_elem_vec_int8(pt_in_or_out, ipts2) < 0) {
+                    j = ipts2;
+                } else {
+                    j = UINT64_MAX;
+                }
+
+                if (j < UINT64_MAX){
+                    astar(p->vertices, p->edges, i, j, forbidden_edges, listEdges, listNodes);
+                    if (listEdges->size>0){ //If a path has been found between two points.
+                        for(k=0; k<listNodes->size; k++){
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 0, &ie);
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 1, &je);
+                        }
+                    }
+                }
+
+                //Second edge of second intersection
+                je1 = *get_ith_elem_vec_uint(edge_intersect2, je);
+                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
+                GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+                GrB_Vector_extractElement(&ipts1, ipts, 0);
+                GrB_Vector_extractElement(&ipts2, ipts, 1);
+
+                if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
+                    j = ipts1;
+                } else if (*get_ith_elem_vec_int8(pt_in_or_out, ipts2) < 0) {
+                    j = ipts2;
+                } else {
+                    j = UINT64_MAX;
+                }
+
+                if (j < UINT64_MAX){
+                    astar(p->vertices, p->edges, i, j, forbidden_edges, listEdges, listNodes);
+                    if (listEdges->size>0){ //If a path has been found between two points.
+                        for(k=0; k<listNodes->size; k++){
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 0, &ie);
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 1, &je);
+                        }
+                    }
+                }
+            }
+        }
+
+        //Second edge of first intersection
+        ie1 = *get_ith_elem_vec_uint(edge_intersect2, ie);
+        //krange = ind_pts[nzrange(p.edges, ie1)]
+        GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ie1, GrB_NULL); 
+        GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+        GrB_Vector_extractElement(&ipts1, ipts, 0);
+        GrB_Vector_extractElement(&ipts2, ipts, 1);
+
+        if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
+            i = ipts1;
+        } else if (*get_ith_elem_vec_int8(pt_in_or_out, ipts2) < 0) {
+            i = ipts2;
+        } else {
+            i = UINT64_MAX;
+        }
+        if (i < UINT64_MAX){
+            for (je = ie+1; j<nb_intersec; je++){
+                //First edge of second intersection
+                je1 = *get_ith_elem_vec_uint(edge_intersect1, je);
+                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
+                GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+                GrB_Vector_extractElement(&ipts1, ipts, 0);
+                GrB_Vector_extractElement(&ipts2, ipts, 1);
+
+                if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
+                    j = ipts1;
+                } else if (*get_ith_elem_vec_int8(pt_in_or_out, ipts2) < 0) {
+                    j = ipts2;
+                } else {
+                    j = UINT64_MAX;
+                }
+
+                if (j < UINT64_MAX){
+                    astar(p->vertices, p->edges, i, j, forbidden_edges, listEdges, listNodes);
+                    if (listEdges->size>0){ //If a path has been found between two points.
+                        for(k=0; k<listNodes->size; k++){
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 0, &ie);
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 1, &je);
+                        }
+                    }
+                }
+
+                //Second edge of second intersection
+                je1 = *get_ith_elem_vec_uint(edge_intersect2, je);
+                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
+                GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+                GrB_Vector_extractElement(&ipts1, ipts, 0);
+                GrB_Vector_extractElement(&ipts2, ipts, 1);
+
+                if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
+                    j = ipts1;
+                } else if (*get_ith_elem_vec_int8(pt_in_or_out, ipts2) < 0) {
+                    j = ipts2;
+                } else {
+                    j = UINT64_MAX;
+                }
+
+                if (j < UINT64_MAX){
+                    astar(p->vertices, p->edges, i, j, forbidden_edges, listEdges, listNodes);
+                    if (listEdges->size>0){ //If a path has been found between two points.
+                        for(k=0; k<listNodes->size; k++){
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 0, &ie);
+                            set_ijth_elem_arr_int(*pair_intersection, *get_ith_elem_vec_uint(listNodes, k), 1, &je);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    GrB_free(&ej);
+    GrB_free(&ipts);
+    GrB_free(&extr_vals_ej);
+    dealloc_vec_uint(listEdges); free(listEdges);
+    dealloc_vec_uint(listNodes); free(listNodes);
+}
+
+//Computes (pt->x+dt*vsx, pt->y+dt*vsy) for all pt in p->vertices.
+//In other words : computes the points at tn+dt.
 static Vector_points2D* build_vertices_tnp1(const Polygon2D* p, const my_real* vsx, const my_real* vsy, uint64_t size_vs, my_real dt, Array_int* list_del_pts){
     Vector_points2D* vertices_tnp1;
     uint64_t i;
@@ -369,8 +805,10 @@ static Vector_points2D* build_vertices_tnp1(const Polygon2D* p, const my_real* v
     return vertices_tnp1;
 }
 
+//Compute the polyhedron in space-time given vertices at time tn+dt.
+//It supposes no intersection occurs at time tn+dt.
 static Polyhedron3D* build_space_time_cell_given_tnp1_vertices(const Polygon2D* fn, const Vector_points2D* vertices_tnp1, my_real dt, bool split){
-    uint64_t i;
+    uint64_t i, j, ie, size_edge_indices;
     int8_t fne_ptind;
     long int val;
     Point2D *pt2D;
@@ -381,11 +819,12 @@ static Polyhedron3D* build_space_time_cell_given_tnp1_vertices(const Polygon2D* 
     GrB_Index *I_index, *J_index;
     GrB_Info infogrb;
     GrB_Vector ed_i, nz_ei, val_nz_ei;
+    GrB_Vector fj, extr_vals_fj, edge_indices;
     GrB_Matrix emptyNE, emptySW, emptyE_N, emptyE_S;
     GrB_Matrix *new_edges = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
     GrB_Matrix *new_faces = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
     GrB_Matrix *new_volume = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
-    Vector_int *status_faces = (Vector_int*)malloc(sizeof(Vector_int));
+    Vector_int *status_faces;
     const uint64_t nb_pts = fn->vertices->size;
     Vector_points3D *new_vertices = alloc_with_capacity_vec_pts3D(2*nb_pts);
     
@@ -491,80 +930,96 @@ static Polyhedron3D* build_space_time_cell_given_tnp1_vertices(const Polygon2D* 
     infogrb = GrB_Vector_new(&ed_i, GrB_INT8, nb_rows_faces);
     infogrb = GrB_Vector_new(&nz_ei, GrB_UINT64, nb_rows_faces);
     infogrb = GrB_Vector_new(&val_nz_ei, GrB_INT8, nb_rows_faces);
+    GrB_Vector_new(&fj, GrB_INT8, nb_edges);
+    GrB_Vector_new(&edge_indices, GrB_UINT64, nb_edges);
+    GrB_Vector_new(&extr_vals_fj, GrB_INT8, nb_edges);
     if (split){ //Each edge in 2D is turned into 2 faces (triangulation)
         //Now, we create the diagonal edges, and create all faces between t=tn and t=tn+dt
-        for (i=0; i<nb_edges; i++){
-            infogrb = GrB_extract(ed_i, GrB_NULL, GrB_NULL, *(fn->edges), GrB_ALL, 1, i, GrB_NULL); //Get point indices of edge i
-            infogrb = GxB_Vector_extractTuples_Vector(nz_ei, val_nz_ei, ed_i, GrB_NULL);
+        for(j=0; j<nb_rows_faces; j++){
+            GrB_extract(fj, GrB_NULL, GrB_NULL, *(fn->faces), GrB_ALL, 1, j, GrB_NULL); //Get indices of edges composing face i
+            GxB_Vector_extractTuples_Vector(edge_indices, extr_vals_fj, fj, GrB_NULL);
+            GrB_Vector_size(&size_edge_indices, edge_indices);
 
-            infogrb = GrB_Vector_extractElement(&pt_index1, nz_ei, 0);
-            infogrb = GrB_Vector_extractElement(&pt_index2, nz_ei, 1);
-            
-            //GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
-            GrB_Vector_extractElement(&fne_ptind, val_nz_ei, 0);
-            if (fne_ptind > 0){ //pt_index1 should always be the index where the edges starts
-                temp = pt_index1;
-                pt_index1 = pt_index2;
-                pt_index2 = temp;
+            for (ie=0; ie<size_edge_indices; ie++){
+                GrB_Vector_extractElement(&i, edge_indices, ie);
+                infogrb = GrB_extract(ed_i, GrB_NULL, GrB_NULL, *(fn->edges), GrB_ALL, 1, i, GrB_NULL); //Get point indices of edge i
+                infogrb = GxB_Vector_extractTuples_Vector(nz_ei, val_nz_ei, ed_i, GrB_NULL);
+
+                infogrb = GrB_Vector_extractElement(&pt_index1, nz_ei, 0);
+                infogrb = GrB_Vector_extractElement(&pt_index2, nz_ei, 1);
+
+                //GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
+                GrB_Vector_extractElement(&fne_ptind, val_nz_ei, 0);
+                if (fne_ptind > 0){ //pt_index1 should always be the index where the edges starts
+                    temp = pt_index1;
+                    pt_index1 = pt_index2;
+                    pt_index2 = temp;
+                }
+
+                GrB_Matrix_setElement(*new_edges,  1, pt_index2 + nb_pts, curr_edge); //diagonal edge
+                GrB_Matrix_setElement(*new_edges, -1, pt_index1         , curr_edge); //diagonal edge
+
+                GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
+                GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
+                GrB_Matrix_setElement(*new_faces, -1, curr_edge                , curr_face); //diagonal edge
+
+                GrB_Matrix_setElement(*new_faces, -1, i + nb_edges             , curr_face + 1); //edge at time tn+dt
+                GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face + 1); //vertical edge of pt_index1 between t=tn and t=tn+dt
+                GrB_Matrix_setElement(*new_faces,  1, curr_edge                , curr_face + 1); //diagonal edge
+
+                val = 3+i;
+                set_ith_elem_vec_int(status_faces, curr_face    , &val);
+                set_ith_elem_vec_int(status_faces, curr_face + 1, &val);
+
+                //pressure_face[curr_face] = fn.pressure_edge[i] //TODO Report this
+                //pressure_face[curr_face+1] = fn.pressure_edge[i] //TODO Report this
+
+
+                GrB_Matrix_extractElement(&fne_ptind, *(fn->faces), i, j);
+                GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face    , 0);
+                GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face + 1, 0);
+
+                curr_edge += 1;
+                curr_face += 2;
             }
-
-            GrB_Matrix_setElement(*new_edges,  1, pt_index2 + nb_pts, curr_edge); //diagonal edge
-            GrB_Matrix_setElement(*new_edges, -1, pt_index1         , curr_edge); //diagonal edge
-
-            GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
-            GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
-            GrB_Matrix_setElement(*new_faces, -1, curr_edge                , curr_face); //diagonal edge
-
-            GrB_Matrix_setElement(*new_faces, -1, i + nb_edges             , curr_face + 1); //edge at time tn+dt
-            GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face + 1); //vertical edge of pt_index1 between t=tn and t=tn+dt
-            GrB_Matrix_setElement(*new_faces,  1, curr_edge                , curr_face + 1); //diagonal edge
-
-            val = 3+i;
-            set_ith_elem_vec_int(status_faces, curr_face    , &val);
-            set_ith_elem_vec_int(status_faces, curr_face + 1, &val);
-
-            //pressure_face[curr_face] = fn.pressure_edge[i] //TODO Report this
-            //pressure_face[curr_face+1] = fn.pressure_edge[i] //TODO Report this
-
-
-            GrB_Matrix_extractElement(&fne_ptind, *(fn->faces), i, 0);
-            GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face    , 0);
-            GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face + 1, 0);
-
-            curr_edge += 1;
-            curr_face += 2;
         }
     } else {//Each edge in 2D is turned into 1 single face (no triangulation)
         //Now, we create all faces between t=tn and t=tn+dt
-        for (i=0; i<nb_edges; i++){
-            infogrb = GrB_extract(ed_i, GrB_NULL, GrB_NULL, *(fn->edges), GrB_ALL, 1, i, GrB_NULL); //Get point indices of edge i
-            infogrb = GxB_Vector_extractTuples_Vector(nz_ei, val_nz_ei, ed_i, GrB_NULL);
+        for(j=0; j<nb_rows_faces; j++){
+            GrB_extract(fj, GrB_NULL, GrB_NULL, *(fn->faces), GrB_ALL, 1, j, GrB_NULL); //Get indices of edges composing face i
+            GxB_Vector_extractTuples_Vector(edge_indices, extr_vals_fj, fj, GrB_NULL);
+            GrB_Vector_size(&size_edge_indices, edge_indices);
 
-            infogrb = GrB_Vector_extractElement(&pt_index1, nz_ei, 0);
-            infogrb = GrB_Vector_extractElement(&pt_index2, nz_ei, 1);
-            
-            GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
-            if (fne_ptind > 0){ //pt_index1 should always be the index where the edges starts
-                temp = pt_index1;
-                pt_index1 = pt_index2;
-                pt_index2 = temp;
+            for (ie=0; ie<size_edge_indices; ie++){
+                GrB_Vector_extractElement(&i, edge_indices, ie);
+                infogrb = GrB_extract(ed_i, GrB_NULL, GrB_NULL, *(fn->edges), GrB_ALL, 1, i, GrB_NULL); //Get point indices of edge i
+                infogrb = GxB_Vector_extractTuples_Vector(nz_ei, val_nz_ei, ed_i, GrB_NULL);
+
+                infogrb = GrB_Vector_extractElement(&pt_index1, nz_ei, 0);
+                infogrb = GrB_Vector_extractElement(&pt_index2, nz_ei, 1);
+                
+                GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
+                if (fne_ptind > 0){ //pt_index1 should always be the index where the edges starts
+                    temp = pt_index1;
+                    pt_index1 = pt_index2;
+                    pt_index2 = temp;
+                }
+
+                GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
+                GrB_Matrix_setElement(*new_faces, -1, i + nb_edges             , curr_face); //edge at time tn+dt
+                GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
+                GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face); //vertical edge of pt_index1 between t=tn and t=tn+dt
+
+                val = 3+i;
+                set_ith_elem_vec_int(status_faces, curr_face, &val);
+
+                //pressure_face[curr_face] = fn.pressure_edge[i] //TODO Report this
+
+                GrB_Matrix_extractElement(&fne_ptind, *(fn->faces), i, j);
+                GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face, 0);
+
+                curr_face += 1;
             }
-
-            GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
-            GrB_Matrix_setElement(*new_faces, -1, i + nb_edges             , curr_face); //edge at time tn+dt
-            GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
-            GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face); //vertical edge of pt_index1 between t=tn and t=tn+dt
-
-            val = 3+i;
-            set_ith_elem_vec_int(status_faces, curr_face, &val);
-
-            //pressure_face[curr_face] = fn.pressure_edge[i] //TODO Report this
-
-            GrB_Matrix_extractElement(&fne_ptind, *(fn->faces), i, 0);
-            GrB_Matrix_setElement(*new_volume, fne_ptind, curr_face, 0);
-
-            curr_edge += 1;
-            curr_face += 1;
         }
     }
 
@@ -577,9 +1032,241 @@ static Polyhedron3D* build_space_time_cell_given_tnp1_vertices(const Polygon2D* 
     GrB_Vector_free(&ed_i);
     GrB_Vector_free(&nz_ei);
     GrB_Vector_free(&val_nz_ei);
+    GrB_free(&fj);
+    GrB_free(&extr_vals_fj);
+    GrB_free(&edge_indices);
 
     return new_Polyhedron3D_vefvs(new_vertices, new_edges, new_faces, new_volume, status_faces);
 }
+
+//Compute the polyhedron in space-time given the polygon at time tn+dt.
+//It supposes some intersections occur at time tn+dt and where already treated in fn (at time tn, with all the backpropagation) and at time tn+dt (with all intersection points added, edges modified, etc).
+static Polyhedron3D* build_space_time_cell_with_intersection(const Polygon2D* fn, const Polygon2D* fnp1, my_real dt,\
+                                                    const Vector_int8* pt_in_or_out_split, const Vector_int8* pt_in_or_out_fuse){
+    Vector_points3D* new_vertices;
+    uint64_t i, nb_pts1, nb_pts2, nb_pts_in; 
+    GrB_Index j, ie;
+    GrB_Index nb_edges1, nb_edges2;
+    GrB_Index nb_faces1, nb_faces2;
+    GrB_Index pt_index1, pt_index2, temp;
+    GrB_Index nb_cols_newedges, nb_cols_newfaces, size_edge_indices, size_nz_ei;
+    Point3D pt3D;
+    GrB_Matrix emptyNE, emptySW, emptyE_N, emptyE_S;
+    GrB_Matrix *new_edges = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
+    GrB_Matrix *new_faces = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
+    GrB_Matrix *new_volume = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
+    Vector_int *status_faces;
+    GrB_Index *I_index, *J_index;
+    GrB_Index curr_edge, v_edges_index, curr_face;
+    GrB_Vector fj, extr_vals_fj, edge_indices;
+    GrB_Vector ed_i, nz_ei, val_nz_ei;
+    long val;
+    int8_t in_out_f1, in_out_f2, in_out_s1, in_out_s2;
+    Polyhedron3D* res_p;
+   
+    nb_pts1 = fn->vertices->size;
+    nb_pts2 = fnp1->vertices->size;
+    GrB_Matrix_ncols(&nb_edges1, *(fn->edges));
+    GrB_Matrix_ncols(&nb_edges2, *(fnp1->edges));
+    GrB_Matrix_ncols(&nb_faces1, *(fn->faces));
+    GrB_Matrix_ncols(&nb_faces2, *(fnp1->faces));
+    new_vertices = alloc_with_capacity_vec_pts3D(nb_pts1 + nb_pts2);
+
+    pt3D = (Point3D){0.,0.,0.};
+    for(i=0; i<nb_pts1; i++){
+        pt3D.x = get_ith_elem_vec_pts2D(fn->vertices, i)->x;
+        pt3D.y = get_ith_elem_vec_pts2D(fn->vertices, i)->y;
+        set_ith_elem_vec_pts3D(new_vertices, i, &pt3D);
+    }
+
+    pt3D.t = dt;
+    for(i=0; i<nb_pts2; i++){
+        pt3D.x = get_ith_elem_vec_pts2D(fnp1->vertices, i)->x;
+        pt3D.y = get_ith_elem_vec_pts2D(fnp1->vertices, i)->y;
+        set_ith_elem_vec_pts3D(new_vertices, i+nb_pts1, &pt3D);
+    }
+
+    nb_pts_in = 0;
+    for(i=0; i<pt_in_or_out_fuse->size; i++){
+        if (*get_ith_elem_vec_int8(pt_in_or_out_fuse, i)>=0){
+            nb_pts_in++;
+        }
+        if (*get_ith_elem_vec_int8(pt_in_or_out_split, i)>=0){
+            nb_pts_in++;
+        }
+    }
+    //pt_indexes = rowvals(fn.edges)
+    //rowvals_faces = rowvals(fn.faces)
+
+    GrB_Matrix_new(new_edges, GrB_INT8, nb_pts1 + nb_pts2, nb_edges1 + nb_edges2 + nb_pts1 + nb_pts_in - 1);
+    GrB_Matrix_new(&emptyNE, GrB_INT8, nb_pts1, nb_edges2);
+    GrB_Matrix_new(&emptySW, GrB_INT8, nb_pts2, nb_edges1);
+    GrB_Matrix_new(&emptyE_N, GrB_INT8, nb_pts1, nb_pts1 + nb_pts_in - 1);
+    GrB_Matrix_new(&emptyE_S, GrB_INT8, nb_pts2, nb_pts1 + nb_pts_in - 1);
+
+    GxB_Matrix_concat(*new_edges, (GrB_Matrix[]){*(fn->edges), emptyNE, emptyE_N, emptySW, *(fnp1->edges), emptyE_S}, 2, 3, GrB_NULL); //new_edges = [fn->edges, 0, 0; 0, fnp1->edges, 0]
+    GrB_Matrix_ncols(&nb_cols_newedges, *new_edges);
+
+    GrB_Matrix_new(new_faces, GrB_INT8, nb_cols_newedges, nb_faces1 + nb_faces2 + nb_edges1 + nb_edges2);
+    I_index = (GrB_Index*)malloc((nb_edges1>nb_edges2? nb_edges1 : nb_edges2)*sizeof(GrB_Index));
+    J_index = (GrB_Index*)malloc((nb_faces1>nb_faces2? nb_faces1 : nb_faces2)*sizeof(GrB_Index));
+    for (i = 0; i<nb_edges2; i++){
+        I_index[i] = nb_edges1 + i;
+    }
+    for (i = 0; i<nb_faces2; i++){
+        J_index[i] = nb_faces1 + i;
+    }
+    GxB_Matrix_subassign(*new_faces, GrB_NULL, GrB_NULL, *(fn->faces), I_index, nb_edges2, J_index, nb_faces2, GrB_NULL);
+    GrB_apply(*new_faces, GrB_NULL, GrB_NULL, GrB_AINV_INT8, *new_faces, GrB_NULL);
+    for (i = 0; i<nb_edges1; i++){
+        I_index[i] = i;
+    }
+    for (i = 0; i<nb_faces1; i++){
+        J_index[i] = i;
+    }
+    GxB_Matrix_subassign(*new_faces, GrB_NULL, GrB_NULL, *(fn->faces), I_index, nb_edges1, J_index, nb_faces1, GrB_NULL);
+    GrB_Matrix_ncols(&nb_cols_newfaces, *new_faces);
+
+    status_faces = alloc_with_capacity_vec_int(nb_cols_newfaces);
+    val = 1;
+    for(i = 0; i < nb_faces1; i++){
+        set_ith_elem_vec_int(status_faces, i, &val);
+    }
+    val = 2;
+    for(i = nb_faces1; i < nb_faces1 + nb_faces2; i++){
+        set_ith_elem_vec_int(status_faces, i, &val);
+    }
+    val = 0;
+    for(i = nb_faces1 + nb_faces2; i < nb_cols_newfaces; i++){
+        set_ith_elem_vec_int(status_faces, i, &val);
+    }
+
+    GrB_Matrix_new(new_volume, GrB_INT8, nb_cols_newfaces, 1);
+    for(i=0; i<nb_edges1; i++){
+        GrB_Matrix_setElement(*new_volume, -1, i, 0);
+    }
+    for(i=nb_edges1; i<nb_cols_newfaces; i++){
+        GrB_Matrix_setElement(*new_volume, 1, i, 0);
+    }
+
+    curr_edge = nb_edges1 + nb_edges2;
+    v_edges_index = curr_edge;
+    curr_face = nb_faces1 + nb_faces2;
+
+    for(i=0; i<nb_pts1; i++){
+        GrB_Matrix_setElement(*new_edges, -1, i, curr_edge);
+        GrB_Matrix_setElement(*new_edges, 1, i + nb_pts1, curr_edge);
+        curr_edge++;
+    }
+
+    //At this point, new_edges has the following organisation :
+    //First nb_edges: original edges of f at t=tn
+    //Following nb_edges: edges of f at t=tn+dt
+    //Following nb_pts: edges linking pt at t=tn and pt at t=tn+dt
+    GrB_Vector_new(&ed_i, GrB_INT8, nb_edges1);
+    GrB_Vector_new(&nz_ei, GrB_UINT64, nb_edges1);
+    GrB_Vector_new(&val_nz_ei, GrB_INT8, nb_edges1);
+    GrB_Vector_new(&fj, GrB_INT8, nb_edges1);
+    GrB_Vector_new(&edge_indices, GrB_UINT64, nb_edges1);
+    GrB_Vector_new(&extr_vals_fj, GrB_INT8, nb_edges1);
+    for(j=0; j<nb_faces1; j++){
+        GrB_extract(fj, GrB_NULL, GrB_NULL, *(fn->faces), GrB_ALL, 1, j, GrB_NULL); //Get indices of edges composing face i
+        GxB_Vector_extractTuples_Vector(edge_indices, extr_vals_fj, fj, GrB_NULL);
+        GrB_Vector_size(&size_edge_indices, edge_indices);
+
+        for (ie=0; ie<size_edge_indices; ie++){
+            GrB_Vector_extractElement(&i, edge_indices, ie);
+            GrB_extract(ed_i, GrB_NULL, GrB_NULL, *(fn->edges), GrB_ALL, 1, i, GrB_NULL); //Get point indices of edge i
+            GxB_Vector_extractTuples_Vector(nz_ei, val_nz_ei, ed_i, GrB_NULL);
+            GrB_Vector_size(&size_nz_ei, nz_ei);
+
+            if(size_nz_ei>0){
+                GrB_Vector_extractElement(&pt_index1, nz_ei, 0);
+                GrB_Vector_extractElement(&pt_index2, nz_ei, 1);
+            
+                //GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
+                GrB_Vector_extractElement(&in_out_f1, val_nz_ei, 0);
+                if (in_out_f1 > 0){ //pt_index1 should always be the index where the edges starts
+                    temp = pt_index1;
+                    pt_index1 = pt_index2;
+                    pt_index2 = temp;
+                }
+
+                in_out_f1 = *get_ith_elem_vec_int8(pt_in_or_out_fuse, pt_index1);
+                in_out_f2 = *get_ith_elem_vec_int8(pt_in_or_out_fuse, pt_index2);
+                in_out_s1 = *get_ith_elem_vec_int8(pt_in_or_out_split, pt_index1);
+                in_out_s2 = *get_ith_elem_vec_int8(pt_in_or_out_split, pt_index2);
+                //if (((pt_in_or_out_fuse[pt_index1] ≥ 0) && (pt_in_or_out_fuse[pt_index2] ≥ 0)) && ((pt_in_or_out_split[pt_index1] ≥ 0) && (pt_in_or_out_split[pt_index2] ≥ 0)))
+                if (((in_out_f1 >= 0) && (in_out_f2 >= 0)) && ((in_out_s1 >= 0) && (in_out_s2 >= 0))){
+                    GrB_Matrix_setElement(*new_edges,  1, pt_index2 + nb_pts1, curr_edge); //diagonal edge
+                    GrB_Matrix_setElement(*new_edges, -1, pt_index1          , curr_edge); //diagonal edge
+
+                    GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
+                    GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
+                    GrB_Matrix_setElement(*new_faces, -1, curr_edge                , curr_face); //diagonal edge
+
+                    GrB_Matrix_setElement(*new_faces, -1, i + nb_edges1            , curr_face + 1); //edge at time tn+dt
+                    GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face + 1); //vertical edge of pt_index1 between t=tn and t=tn+dt
+                    GrB_Matrix_setElement(*new_faces,  1, curr_edge                , curr_face + 1); //diagonal edge
+
+                    val = -(3+i);
+                    set_ith_elem_vec_int(status_faces, curr_face    , &val);
+                    set_ith_elem_vec_int(status_faces, curr_face + 1, &val);
+
+
+                    GrB_Matrix_extractElement(&in_out_f1, *(fn->faces), i, j);
+                    GrB_Matrix_setElement(*new_volume, in_out_f1, curr_face    , 0);
+                    GrB_Matrix_setElement(*new_volume, in_out_f1, curr_face + 1, 0);
+
+                    curr_edge += 1;
+                    curr_face += 2;
+                } else {
+                    GrB_Matrix_setElement(*new_faces,  1, i                        , curr_face); //edge at time tn
+                    GrB_Matrix_setElement(*new_faces, -1, i + nb_edges1             , curr_face); //edge at time tn+dt
+                    GrB_Matrix_setElement(*new_faces,  1, v_edges_index + pt_index2, curr_face); //vertical edge
+                    GrB_Matrix_setElement(*new_faces, -1, v_edges_index + pt_index1, curr_face); //vertical edge of pt_index1 between t=tn and t=tn+dt
+
+                    val = -(3+i);
+                    set_ith_elem_vec_int(status_faces, curr_face, &val);
+
+                    GrB_Matrix_extractElement(&in_out_f1, *(fn->faces), i, j);
+                    GrB_Matrix_setElement(*new_volume, in_out_f1, curr_face, 0);
+
+                    curr_face += 1;
+                }
+            }
+        }
+    }
+
+    GrB_Matrix_resize(*new_edges, nb_pts1 + nb_pts2, curr_edge-1);
+    GrB_Matrix_resize(*new_faces, curr_edge-1, curr_face-1);
+    GrB_Matrix_resize(*new_volume, curr_face-1, 1);
+    status_faces->size = curr_face-1;
+    res_p = new_Polyhedron3D_vefvs(new_vertices, new_edges, new_faces, new_volume, status_faces);
+
+    GrB_free(&emptyNE);
+    GrB_free(&emptySW);
+    GrB_free(&emptyE_N);
+    GrB_free(&emptyE_S);
+    GrB_free(&fj);
+    GrB_free(&edge_indices);
+    GrB_free(&extr_vals_fj);
+    GrB_free(&ed_i);
+    GrB_free(&nz_ei);
+    GrB_free(&val_nz_ei);
+
+    dealloc_vec_pts3D(new_vertices); free(new_vertices);
+    GrB_free(new_edges);
+    if(new_edges) free(new_edges);
+    GrB_free(new_faces);
+    if(new_faces) free(new_faces);
+    GrB_free(new_volume);
+    if(new_volume) free(new_volume);
+    dealloc_vec_int(status_faces); free(status_faces);
+
+    return res_p;
+}
+
 
 /// @brief Using a polygon `fn` defined at time t^n and a set of vectors `vs` defining the translation of each point of `fn` at time t^{n+1} = t^n+`dt`,
 ///        this function builds a 3D polyhedron (2D + time) connecting `fn` and the polygon at time t^{n+1}. 
@@ -594,130 +1281,7 @@ Polyhedron3D* build_space2D_time_cell(const Polygon2D *fn, const my_real *vsx, c
     return build_space_time_cell_given_tnp1_vertices(fn, vertices_tnp1, dt, split);
 }
 
-static void split_edge(Polygon2D* p, uint64_t i_e, Point2D *new_pt){
-    GrB_Index nb_edge;
-    GrB_Info infogrb;
-    GrB_Vector ej, extr_vals_ej, inds_pts_edge;
-    GrB_Index i_e0_pt0, i_e0_pt1;
-    uint64_t ind_new_pt;
-    int8_t val;
-    GrB_Matrix new_line, new_edge;
-    GrB_Index nb_faces;
-
-    GrB_Matrix_ncols(&nb_edge, *(p->edges));
-    GrB_Matrix_ncols(&nb_faces, *(p->faces));
-    infogrb = GrB_Vector_new(&ej, GrB_INT8, 2);
-    infogrb = GrB_Vector_new(&extr_vals_ej, GrB_INT8, 2);
-    infogrb = GrB_Vector_new(&inds_pts_edge, GrB_UINT64, 2);
-
-    //Extract the column i_e of p.edges, and take the two first non-zero values.
-    infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, i_e, GrB_NULL);
-    infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge, extr_vals_ej, ej, GrB_NULL);
-    infogrb = GrB_Vector_extractElement(&i_e0_pt0, inds_pts_edge, 0);
-    infogrb = GrB_Vector_extractElement(&i_e0_pt1, inds_pts_edge, 1);
-    infogrb = GrB_Vector_extractElement(&val, extr_vals_ej, 0);
-
-    //pts_indices = rowvals(p.edges)
-    //inds_pts_edge = pts_indices[nzrange(p.edges, i_e)]
-
-    push_back_vec_pts2D(p->vertices, new_pt);
-    ind_new_pt = p->vertices->size;
-
-    infogrb = GrB_Matrix_setElement(*(p->edges), 0, i_e0_pt0, i_e);
-
-    infogrb = GrB_Matrix_new(&new_line, GrB_INT8, 1, nb_edge);
-    infogrb = GrB_Matrix_new(&new_edge, GrB_INT8, ind_new_pt, 1);
-    infogrb = GrB_Matrix_setElement(new_line, val, 0, i_e);
-    infogrb = GrB_Matrix_setElement(new_edge, val, i_e0_pt0, 0);
-    infogrb = GrB_Matrix_setElement(new_edge, -val, ind_new_pt, 0);
-    
-    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){*(p->edges), new_line}, 2, 1, GrB_NULL); //edges = [edges ; new_line]
-    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){*(p->edges), new_edge}, 1, 2, GrB_NULL); //edges = [edges   new_edge]
-
-    infogrb = GrB_Matrix_resize(new_line, 1, nb_faces);
-    infogrb = GrB_extract(new_line, GrB_NULL, GrB_NULL, *(p->faces), (GrB_Index[]){i_e}, 1, GrB_ALL, 1,GrB_NULL); 
-    infogrb = GxB_Matrix_concat(*(p->faces), (GrB_Matrix[]){*(p->faces), new_line}, 2, 1, GrB_NULL); //faces = [faces ; faces[i_e,:]]
-
-    //push!(p.pressure_edge, p.pressure_edge[i_e]) //TODO Report this
-    //push!(p.status_edge, p.status_edge[i_e]) //TODO Report this
-
-    dropzeros(p->edges);
-    dropzeros(p->faces);
-
-    GrB_Vector_free(&ej);
-    GrB_Vector_free(&extr_vals_ej);
-    GrB_Vector_free(&inds_pts_edge);
-    GrB_Matrix_free(&new_line);
-    GrB_Matrix_free(&new_edge);
-}
-
-static void fuse_points(Polygon2D *p, int64_t ind_e0_fused, int64_t ind_e1_fused, int64_t ind_face, bool do_dropzeros){
-    GrB_Info infogrb;
-    GrB_Vector ej, extr_vals_ej, inds_pts_edge0, inds_pts_edge1;
-    GrB_Index i_e0_pt0, i_e0_pt1, i_e1_pt0, i_e1_pt1;
-    uint64_t ind_pt_del, ind_pt1, ind_pt2;
-    int8_t val;
-
-    infogrb = GrB_Vector_new(&ej, GrB_INT8, 2);
-    infogrb = GrB_Vector_new(&extr_vals_ej, GrB_INT8, 2);
-    infogrb = GrB_Vector_new(&inds_pts_edge0, GrB_UINT64, 2);
-    infogrb = GrB_Vector_new(&inds_pts_edge1, GrB_UINT64, 2);
-
-    if (ind_e1_fused != ind_e0_fused) { //one edge to suppress, the other one is modified.
-        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ind_e0_fused, GrB_NULL);
-        infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge0, extr_vals_ej, ej, GrB_NULL);
-        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ind_e1_fused, GrB_NULL);
-        infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge1, extr_vals_ej, ej, GrB_NULL);
-        //Find the index of the points composing these two edges
-        infogrb = GrB_Vector_extractElement(&i_e0_pt0, inds_pts_edge0, 0);
-        infogrb = GrB_Vector_extractElement(&i_e0_pt1, inds_pts_edge0, 1);
-        infogrb = GrB_Vector_extractElement(&i_e1_pt0, inds_pts_edge1, 0);
-        infogrb = GrB_Vector_extractElement(&i_e1_pt1, inds_pts_edge1, 1);
-
-        //The point in common in these two edges is the point to delete.
-        if ((i_e0_pt0 == i_e1_pt0) || (i_e0_pt0 == i_e1_pt1)){
-            ind_pt_del = i_e0_pt0;
-            ind_pt1 = i_e0_pt1;
-        } else {
-            ind_pt_del = i_e0_pt1;
-            ind_pt1 = i_e0_pt0;
-        }
-        if (i_e1_pt0 == ind_pt_del)
-            ind_pt2 = i_e1_pt1;
-        else
-            ind_pt2 = i_e1_pt0;
-        
-        infogrb = GrB_Matrix_extractElement(&val, *(p->edges), ind_pt_del, ind_e0_fused);
-        infogrb = GrB_Matrix_setElement(*(p->edges), val, ind_pt2, ind_e0_fused);
-        infogrb = GrB_Matrix_setElement(*(p->edges), 0, ind_pt_del, ind_e0_fused);
-        infogrb = GrB_Matrix_setElement(*(p->edges), 0, ind_pt2, ind_e1_fused);
-        infogrb = GrB_Matrix_setElement(*(p->edges), 0, ind_pt_del, ind_e1_fused);
-
-        infogrb = GrB_Matrix_setElement(*(p->faces), 0, ind_e1_fused, ind_face);
-    } else { //only one edge: means it must be suppressed.
-        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ind_e0_fused, GrB_NULL);
-        infogrb = GxB_Vector_extractTuples_Vector(inds_pts_edge0, extr_vals_ej, ej, GrB_NULL);
-        infogrb = GrB_Vector_extractElement(&i_e0_pt0, inds_pts_edge0, 0);
-        infogrb = GrB_Vector_extractElement(&i_e0_pt1, inds_pts_edge0, 1);
-
-        //inds_pts_edge = pts_indices[nzrange(p.edges, ind_e1_fused)]
-        infogrb = GrB_Matrix_setElement(*(p->edges), 0, i_e0_pt0, ind_e1_fused);
-        infogrb = GrB_Matrix_setElement(*(p->edges), 0, i_e0_pt1, ind_e1_fused);
-
-        infogrb = GrB_Matrix_setElement(*(p->faces), 0, ind_e1_fused, ind_face);
-    }
-
-    if (do_dropzeros){
-        dropzeros(p->edges);
-        dropzeros(p->faces);
-    }
-
-    GrB_Vector_free(&ej);
-    GrB_Vector_free(&extr_vals_ej);
-    GrB_Vector_free(&inds_pts_edge0);
-    GrB_Vector_free(&inds_pts_edge1);
-}
-
+//Detect all edges too long and split it in the middle.
 static void refine_interface(Polygon2D *p, my_real maximal_length){
     uint64_t i, nb_edges;
     Point2D *ext1, *ext2;
@@ -737,6 +1301,7 @@ static void refine_interface(Polygon2D *p, my_real maximal_length){
     }
 }
 
+//Based on list_changed_edges, listing all edges that should be suppressed and how, it suppresses all given edges (usually because they are too short or because the angle is too acute).
 static void coarsen_interface(Polygon2D *p, Array_int *list_changed_edges){
     uint64_t i;
     int64_t ind_e1_fused, ind_e2_fused, ind_f;
@@ -746,156 +1311,231 @@ static void coarsen_interface(Polygon2D *p, Array_int *list_changed_edges){
         if (ind_e1_fused > -1){
             ind_e2_fused = *get_ijth_elem_arr_int(list_changed_edges, i, 1);
             ind_f = *get_ijth_elem_arr_int(list_changed_edges, i, 2);
-            fuse_points(p, ind_e1_fused, ind_e2_fused, ind_f, false);
+            fuse_points(p, ind_e1_fused, ind_e2_fused, ind_f);
         }
     }
-    dropzeros(p->edges);
-    dropzeros(p->faces);
 }
 
+/// @brief Using a polygon `solid` defined at time t^n and a set of vectors `vs` defining the translation of each point of `solid` at time t^{n+1} = t^n+`dt`,
+///        this function builds a 3D polyhedron (2D + time) connecting `fn` and the polygon at time t^{n+1}, and updates solid to be the one at time t^{n+1}.
+/// @details In the resulting polyhedron `solid3D->status_faces`, 1 denotes the face created at t^n, 
+///          2 the face created at t^{n+1}, and i+2 the face created in time-space from edge i.
+///          This function also deals with auto-intersection and removes them when they happen.
+///          It also refine or coarsen the polygon discretization if an edge is too long, too short and an angle in the polygon is too acute.
+/// @param solid [IN] polygon at time t^n
+///              [OUT] polygon at time t^{n+1}
+/// @param solid3D [OUT] polyhedron (2D space + time) linking solid at time t^n and at time t^{n+1}
+/// @param vs* [IN] Vector translating points of `fn` over time `dt` to form the polygon at time t^{n+1}
+/// @param dt [IN] time-step
+/// @param minimal_length [IN] minimal length the path linking three consecutive points should have.
+/// @param maximal_length [IN] maximal length an edge should have.
+/// @param minimal_angle [IN] minimal value (in rad) the angle formed by three consecutive points should have.
 void update_solid(Polygon2D **solid, Polyhedron3D** solid3D, const my_real* vec_move_solidx, const my_real* vec_move_solidy, my_real dt, \
                     my_real minimal_length, my_real maximal_length, my_real minimal_angle){
     Array_int *list_del_pts,  *list_changed_edges;
     Vector_points2D* vertices_tnp1;
-    Polygon2D* solid_new;
-    uint64_t i, nb_faces, ind_pt, j_f, j;
-    Vector_int64* ind_kept_pts;
-    Vector_points2D* new_vertices;
-    GrB_Matrix new_edges, new_faces;
-    GrB_Vector grb_ind_kept_pts, justone;
-    Vector_int *new_status_edge;
-    GrB_Info infogrb;
-    GrB_Vector fj, extr_vals_fj, edge_indices;
-    GrB_Vector ej, extr_vals_ej, pt_indices;
-    GrB_Index nb_edges, size_edge_indices, size_pt_indices, val;
-    GrB_Index ncols_new_edges, ell;
-    int64_t nrows_new_edges;
-    const long int zero = 0;
-    uint64_t size_vs = (*solid)->vertices->size;
-    
+    Polygon2D* solid_new = new_Polygon2D();
+    Polygon2D* solid_tnp1 = new_Polygon2D();
+    uint64_t i, j, k;
+    Vector_points2D* IntersecList = NULL, *IntersecList_fuse = NULL, *IntersecList_split = NULL;
+    Vector_uint* edge_intersect1 = NULL, *edge_intersect1_fuse = NULL, *edge_intersect1_split = NULL;
+    Vector_uint* edge_intersect2 = NULL, *edge_intersect2_fuse = NULL, *edge_intersect2_split = NULL;
+    Vector_points2D *normals_edges = NULL;
+    Vector_int8 *pt_in_or_out_split, *pt_in_or_out_fuse;
+    GrB_Index nb_faces, nb_edges;
+    uint64_t original_nb_pts;
+    int8_t zero8 = 0;
+    int64_t ell, emm;
+    Array_int *pair_intersection_split, *pair_intersection_fuse;
+    Vector_uint **faces_to_split, **faces_to_fuse;
+    uint64_t size_faces_to_split, size_faces_to_fuse;
+    Point2D pt;
+
     detect_pts_to_delete(*solid, dt, vec_move_solidx, vec_move_solidy, minimal_length, minimal_angle, &list_del_pts, &list_changed_edges);
 
-    //Create 3D space-time solid interface: change this when self-intersection occurs!
-    vertices_tnp1 = build_vertices_tnp1(*solid, vec_move_solidx, vec_move_solidy, size_vs, dt, list_del_pts);
-    *solid3D = build_space_time_cell_given_tnp1_vertices(*solid, vertices_tnp1, dt, true);
-    for(i=0; i<(*solid3D)->status_face->size; i++){
-        if ((*solid3D)->status_face->data[i] > 2)
-            (*solid3D)->status_face->data[i] = -(*solid3D)->status_face->data[i]; //Face status numbered negatively for solid space-time reconstructions
+    original_nb_pts = (*solid)->vertices->size;
+    vertices_tnp1 = build_vertices_tnp1(*solid, vec_move_solidx, vec_move_solidy, (*solid)->vertices->size, dt, list_del_pts);
+
+    copy_Polygon2D(*solid, solid_tnp1);
+
+    for (i=0; i<vertices_tnp1->size; i++){
+        set_ith_elem_vec_pts2D(solid_tnp1->vertices, i, get_ith_elem_vec_pts2D(vertices_tnp1, i));
     }
 
-    solid_new = new_Polygon2D();
-    copy_Polygon2D(*solid, solid_new);
-    copy_vec_pts2D(vertices_tnp1, solid_new->vertices);
-    if (minimal_length > 0)
-        coarsen_interface(solid_new, list_changed_edges);
-    if (maximal_length<INFINITY)
-        refine_interface(solid_new, maximal_length);
-    
-    //Clean the result if some points were suppressed
-    GrB_Matrix_ncols(&nb_faces, *(solid_new->faces));
-    GrB_Matrix_ncols(&nb_edges, *(solid_new->edges));
-    ind_kept_pts = alloc_with_capacity_vec_int64(1);
-    new_vertices = alloc_with_capacity_vec_pts2D(1);
-    GrB_Matrix_new(&new_edges, GrB_INT8, 1, 1);
-    GrB_Vector_new(&grb_ind_kept_pts, GrB_UINT64, 1);
-    GrB_Matrix_new(&new_faces, GrB_INT8, 1, 1);
-    GrB_Vector_new(&justone, GrB_UINT64, 1);
-    new_status_edge = alloc_with_capacity_vec_int(1);
-    GrB_Vector_setElement(justone, 0, 0);
-    GrB_Vector_new(&fj, GrB_INT8, nb_edges);
-    GrB_Vector_new(&edge_indices, GrB_UINT64, nb_edges);
-    GrB_Vector_new(&extr_vals_fj, GrB_INT8, nb_edges);
-    GrB_Vector_new(&ej, GrB_INT8, nb_edges);
-    GrB_Vector_new(&pt_indices, GrB_UINT64, nb_edges);
-    GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_edges);
+    IntersecList = alloc_empty_vec_pts2D();
+    edge_intersect1 = alloc_empty_vec_uint();
+    edge_intersect2 = alloc_empty_vec_uint();
+    find_all_self_intersection(solid_tnp1, IntersecList, edge_intersect1, edge_intersect2);
 
-    for (i=0; i<nb_faces; i++){
-        //krange = nzrange(solid_new.faces, i)
-        //edge_indices = rowvals(solid_new.faces)[krange]
-        infogrb = GrB_extract(fj, GrB_NULL, GrB_NULL, *(solid_new->faces), GrB_ALL, 1, i, GrB_NULL); //Get indices of edges composing face i
-        infogrb = GxB_Vector_extractTuples_Vector(edge_indices, extr_vals_fj, fj, GrB_NULL);
-        infogrb = GrB_Vector_size(&size_edge_indices, edge_indices);
+    if (IntersecList->size>0){
+        IntersecList_fuse = alloc_empty_vec_pts2D();
+        edge_intersect1_fuse = alloc_empty_vec_uint();
+        edge_intersect2_fuse = alloc_empty_vec_uint();
+        IntersecList_split = alloc_empty_vec_pts2D();
+        edge_intersect1_split = alloc_empty_vec_uint();
+        edge_intersect2_split = alloc_empty_vec_uint();
+        GrB_Matrix_ncols(&nb_edges, *(solid_tnp1->edges));
+        normals_edges = alloc_with_capacity_vec_pts2D(nb_edges);
+        pt_in_or_out_fuse = alloc_with_capacity_vec_int8(original_nb_pts);
+        pt_in_or_out_split = alloc_with_capacity_vec_int8(original_nb_pts);
 
-        ind_kept_pts->size = 0;
-        for(j_f=0; j_f<size_edge_indices; j_f++){
-            infogrb = GrB_Vector_extractElement(&j, edge_indices, j_f);
-            infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(solid_new->edges), GrB_ALL, 1, j, GrB_NULL); //Get indices of points composing edge j
-            infogrb = GxB_Vector_extractTuples_Vector(pt_indices, extr_vals_ej, ej, GrB_NULL);
-            infogrb = GrB_Vector_size(&size_pt_indices, pt_indices);
-            if(size_pt_indices>0){
-                infogrb = GrB_Vector_extractElement(&val, pt_indices, 0);
-                if(ind_kept_pts->size == 0)
-                    ind_kept_pts->data[0] = val;
-                else
-                    push_back_unique_vec_int64(ind_kept_pts, &val);
-                
-                infogrb = GrB_Vector_extractElement(&val, pt_indices, 1);
-                push_back_unique_vec_int64(ind_kept_pts, &val);
-            }
+        for(i=0; i<original_nb_pts; i++){
+            set_ith_elem_vec_int8(pt_in_or_out_fuse, i, &zero8);
+            set_ith_elem_vec_int8(pt_in_or_out_split, i, &zero8);
         }
-        sort_vec_int64(ind_kept_pts);
-        if (ind_kept_pts->size > 0){
-            ind_pt = *get_ith_elem_vec_int64(ind_kept_pts, 0);
-            set_ith_elem_vec_pts2D(new_vertices, 0, get_ith_elem_vec_pts2D(solid_new->vertices, ind_pt));
-            for (j_f=1; j_f<ind_kept_pts->size; j_f++){
-                ind_pt = *get_ith_elem_vec_int64(ind_kept_pts, j_f);
-                set_ith_elem_vec_pts2D(new_vertices, j_f, get_ith_elem_vec_pts2D(solid_new->vertices, ind_pt));
-            }
-        }
-        
-        //new_edges = solid_new.edges[ind_kept_pts, edge_indices]
-        GrB_reduce(&ncols_new_edges, GrB_NULL, GrB_MAX_MONOID_UINT64, edge_indices, GrB_NULL);
-        if (ind_kept_pts->size>1){
-            nrows_new_edges = *get_ith_elem_vec_int64(ind_kept_pts, ind_kept_pts->size-1);
-            GrB_Vector_resize(grb_ind_kept_pts, ind_kept_pts->size);
-            for(ell=0; ell<ind_kept_pts->size; ell++){
-                GrB_Vector_setElement(grb_ind_kept_pts, *get_ith_elem_vec_int64(ind_kept_pts, ell), ell);
-            }
-            GrB_Matrix_resize(new_edges, nrows_new_edges, ncols_new_edges);
-            GrB_extract(new_edges, GrB_NULL, GrB_NULL, *(solid_new->edges), grb_ind_kept_pts, edge_indices, GrB_NULL);
 
-            //new_faces = solid_new.faces[edge_indices, i]
-            GrB_Matrix_resize(new_faces, nrows_new_edges, 1);
-            GrB_extract(new_faces, GrB_NULL, GrB_NULL, *(solid_new->faces), edge_indices, justone, GrB_NULL);
-        
-
-            //new_status_edge = zeros(nrows_new_edges)
-            if(new_status_edge->size <= (uint64_t)nrows_new_edges){
-                for (j_f=new_status_edge->size; j_f<(uint64_t)nrows_new_edges; j_f++){
-                    set_ith_elem_vec_int(new_status_edge, j_f, &zero);
+        //We will use solid_new as the final result of all the intersection solving process, 
+        //and solid_tnp1 as an intermediate polygon where the intersections occur but are not deleted.
+        compute_all_normals2D(solid_tnp1, NULL, normals_edges, NULL);
+        in_or_out_intersection(solid_tnp1, normals_edges, IntersecList, edge_intersect1, edge_intersect2, \
+                            pt_in_or_out_split->data, IntersecList_split, edge_intersect1_split, edge_intersect2_split,\
+                            pt_in_or_out_fuse->data, IntersecList_fuse, edge_intersect1_fuse, edge_intersect2_fuse);
+        if (IntersecList_split->size > 0){
+            find_pair_intersection(solid_tnp1, edge_intersect1_split, edge_intersect2_split, pt_in_or_out_split, &pair_intersection_split);
+            break_edges_split_fusion(solid_tnp1, edge_intersect1_split, edge_intersect2_split, pt_in_or_out_split->data, &solid_new);
+            polygon_split(solid_new, solid_tnp1->edges,\
+                IntersecList_split, edge_intersect1_split, edge_intersect2_split, pt_in_or_out_split->data, &solid_new, &faces_to_split, &size_faces_to_split);
+        } else {
+            copy_Polygon2D(solid_tnp1, solid_new);
+            pair_intersection_split = alloc_with_capacity_arr_int(solid_tnp1->vertices->size, 2);
+            ell = -1;
+            for(i=0; i<solid_tnp1->vertices->size; i++){
+                for(j=0; j<2; j++){
+                    set_ijth_elem_arr_int(pair_intersection_split, i, j, &ell);
                 }
             }
-            new_status_edge->size = nrows_new_edges;
-            //new_pressure_edge = zeros(Int, size(new_edges, 2))
-            if (i == 0){ //First face created
-                *solid = new_Polygon2D_vefs(new_vertices, &new_edges, &new_faces, new_status_edge);
-            } else { //Faces already exist
-                *solid = fuse_polygons(*solid, new_Polygon2D_vefs(new_vertices, &new_edges, &new_faces, new_status_edge));
+            GrB_Matrix_ncols(&nb_faces, *(solid_tnp1->faces));
+            faces_to_split = (Vector_uint**)malloc(nb_faces*sizeof(Vector_uint*));
+            for(i=0; i<nb_faces; i++){
+                faces_to_split[i] = alloc_empty_vec_uint();
             }
+        }
+        if (IntersecList_fuse->size >0){
+            find_pair_intersection(solid_tnp1, edge_intersect1_fuse, edge_intersect2_fuse, pt_in_or_out_fuse, &pair_intersection_fuse);
+            break_edges_split_fusion(solid_new, edge_intersect1_fuse, edge_intersect2_fuse, pt_in_or_out_fuse->data, &solid_new);
+            polygons_fusion(solid_new, solid_tnp1->edges, IntersecList_fuse, edge_intersect1_fuse, edge_intersect2_fuse, \
+                            pt_in_or_out_fuse->data, &solid_new, &faces_to_fuse, &size_faces_to_fuse);
         } else {
-            if (i == 0){ //First face created
-                GrB_Matrix_resize(new_edges, 0, 0);
-                GrB_Matrix_resize(new_faces, 0, 0);
-                new_status_edge->size = 0;
-                *solid = new_Polygon2D_vefs(new_vertices, &new_edges, &new_faces, new_status_edge);
-                //*solid = new_Polygon2D();
+            pair_intersection_fuse = alloc_with_capacity_arr_int(solid_tnp1->vertices->size, 2);
+            ell = -1;
+            for(i=0; i<solid_tnp1->vertices->size; i++){
+                for(j=0; j<2; j++){
+                    set_ijth_elem_arr_int(pair_intersection_fuse, i, j, &ell);
+                }
             }
+            faces_to_fuse = (Vector_uint**)malloc(nb_faces*sizeof(Vector_uint*));
+            for(i=0; i<nb_faces; i++){
+                faces_to_fuse[i] = alloc_empty_vec_uint();
+            }
+        }
+
+        create_new_faces_split(solid_new, faces_to_split, size_faces_to_split, &solid_new);
+        fuse_faces(solid_new, faces_to_fuse, size_faces_to_fuse, &solid_new);
+        detect_pts_to_delete(solid_new, dt, vec_move_solidx, vec_move_solidy, minimal_length, minimal_angle, &list_del_pts, &list_changed_edges);
+        if (list_del_pts->nrows < solid_new->vertices->size){
+            solid_new->vertices->size = list_del_pts->nrows;
+        }
+
+
+        //solid and solid_tnp1 will now be modified to be the faces of the polyhedron at tn and tn+dt
+        //First: backpropagate the intersection point on the face at tn.
+        backpropagate_pts(*solid, vertices_tnp1, IntersecList_split, edge_intersect1_split, edge_intersect2_split, pt_in_or_out_split);
+        if(pt_in_or_out_fuse->size < pt_in_or_out_split->size){
+            zero8 = 0;
+            for(i=pt_in_or_out_fuse->size; i < pt_in_or_out_split->size; i++){
+                set_ith_elem_vec_int8(pt_in_or_out_fuse, i, &zero8);
+            }
+        }
+        backpropagate_pts(*solid, vertices_tnp1, IntersecList_fuse, edge_intersect1_fuse, edge_intersect2_fuse, pt_in_or_out_fuse);
+        if(pt_in_or_out_fuse->size > pt_in_or_out_split->size){
+            zero8 = 0;
+            for(i=pt_in_or_out_split->size; i < pt_in_or_out_fuse->size; i++){
+                set_ith_elem_vec_int8(pt_in_or_out_split, i, &zero8);
+            }
+        }
+
+        //Second: break the edges where the intersection occurs in two parts.
+        for(i=0; i<edge_intersect1_split->size; i++){
+            split_edge(solid_tnp1, edge_intersect1_split->data[i], get_ith_elem_vec_pts2D(IntersecList_split, i));
+            split_edge(solid_tnp1, edge_intersect2_split->data[i], get_ith_elem_vec_pts2D(IntersecList_split, i));
+        }
+        for(i=0; i<edge_intersect1_fuse->size; i++){
+            split_edge(solid_tnp1, edge_intersect1_fuse->data[i], get_ith_elem_vec_pts2D(IntersecList_fuse,i));
+            split_edge(solid_tnp1, edge_intersect2_fuse->data[i], get_ith_elem_vec_pts2D(IntersecList_fuse,i));
+        }
+
+        //Third: project all deleted points on the edge connecting the two intersection points deleting them, and create new edges.
+        for(i=0; i<original_nb_pts; i++){
+            ell = *get_ijth_elem_arr_int(pair_intersection_split, i, 0);
+            emm = *get_ijth_elem_arr_int(pair_intersection_split, i, 1);
+            if (ell > -1){
+                j = (uint64_t) ell;
+                k = (uint64_t) emm;
+                pt = project_on_edge(get_ith_elem_vec_pts2D(solid_tnp1->vertices, i), 
+                                    get_ith_elem_vec_pts2D(IntersecList_split,j),\
+                                    get_ith_elem_vec_pts2D(IntersecList_split,k));
+                set_ith_elem_vec_pts2D(solid_tnp1->vertices, i, &pt);
+            }
+        }
+        for(i=0; i<original_nb_pts; i++){
+            ell = *get_ijth_elem_arr_int(pair_intersection_fuse, i, 0);
+            emm = *get_ijth_elem_arr_int(pair_intersection_fuse, i, 1);
+            if (ell > -1){
+                j = (uint64_t) ell;
+                k = (uint64_t) emm;
+                pt = project_on_edge(get_ith_elem_vec_pts2D(solid_tnp1->vertices, i), 
+                                    get_ith_elem_vec_pts2D(IntersecList_fuse,j),\
+                                    get_ith_elem_vec_pts2D(IntersecList_fuse,k));
+                set_ith_elem_vec_pts2D(solid_tnp1->vertices, i, &pt);
+            }
+        }
+
+        //Finally, create 3D space-time solid interface using these two polygons.
+        *solid3D = build_space_time_cell_with_intersection(*solid, solid_tnp1, dt, pt_in_or_out_split, pt_in_or_out_fuse);
+    } else {
+        solid_new = solid_tnp1;
+        //Create 3D space-time solid interface
+        *solid3D = build_space_time_cell_given_tnp1_vertices(*solid, vertices_tnp1, dt, true);
+        for(i=0; i<(*solid3D)->status_face->size; i++){
+            if ((*solid3D)->status_face->data[i] > 2)
+                (*solid3D)->status_face->data[i] = -(*solid3D)->status_face->data[i]; //Face status numbered negatively for solid space-time reconstructions
         }
     }
 
-    dealloc_vec_pts2D(vertices_tnp1);
-    dealloc_Polygon2D(solid_new);
-    dealloc_vec_int64(ind_kept_pts);
-    dealloc_vec_int(new_status_edge);
-    dealloc_vec_pts2D(new_vertices);
-    GrB_free(&new_edges);
-    GrB_free(&new_faces);
-    GrB_free(&grb_ind_kept_pts);
-    GrB_free(&justone);
-    GrB_free(&fj);
-    GrB_free(&extr_vals_fj);
-    GrB_free(&edge_indices);
-    GrB_free(&ej);
-    GrB_free(&extr_vals_ej);
-    GrB_free(&pt_indices);
+    coarsen_interface(solid_new, list_changed_edges);
+    if (maximal_length<INFINITY)
+        refine_interface(solid_new, maximal_length);
+
+
+    //Clean the result if some points were suppressed
+    clean_Polygon2D(solid_new, solid);
+
+    dealloc_vec_pts2D(vertices_tnp1); free(vertices_tnp1);
+    dealloc_vec_pts2D(IntersecList); free(IntersecList);
+    dealloc_vec_uint(edge_intersect1); free(edge_intersect1);
+    dealloc_vec_uint(edge_intersect2); free(edge_intersect2);
+    dealloc_Polygon2D(solid_tnp1); free(solid_tnp1);
+    dealloc_Polygon2D(solid_new);  free(solid_new);
+    dealloc_arr_int(list_del_pts); free(list_del_pts);
+    dealloc_arr_int(list_changed_edges); free(list_changed_edges);
+    if(IntersecList_fuse){
+        dealloc_vec_pts2D(IntersecList_fuse); free(IntersecList_fuse);
+        dealloc_vec_uint(edge_intersect1_fuse); free(edge_intersect1_fuse);
+        dealloc_vec_uint(edge_intersect2_fuse); free(edge_intersect2_fuse);
+        dealloc_vec_pts2D(IntersecList_split); free(IntersecList_split);
+        dealloc_vec_uint(edge_intersect1_split); free(edge_intersect1_split);
+        dealloc_vec_uint(edge_intersect2_split); free(edge_intersect2_split);
+        dealloc_vec_pts2D(normals_edges); free(normals_edges);
+        dealloc_arr_int(pair_intersection_split); free(pair_intersection_split);
+        for(i=0; i<nb_faces; i++){
+            dealloc_vec_uint(faces_to_split[i]); free(faces_to_split[i]);
+        }
+        free(faces_to_split);
+        dealloc_arr_int(pair_intersection_fuse); free(pair_intersection_fuse);
+        for(i=0; i<nb_faces; i++){
+            dealloc_vec_uint(faces_to_fuse[i]); free(faces_to_fuse[i]);
+        }
+        free(faces_to_fuse);
+    }
 }
+

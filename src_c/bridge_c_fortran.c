@@ -19,9 +19,9 @@ void launch_grb_(){
 }
 
 void end_grb_(){
-    dealloc_Polygon2D(grid);
-    dealloc_Polygon2D(clipped);
-    dealloc_Polyhedron3D(clipped3D);
+    dealloc_Polygon2D(grid); free(grid);
+    dealloc_Polygon2D(clipped); free(clipped);
+    dealloc_Polyhedron3D(clipped3D); free(clipped3D);
 
     GrB_finalize();
 }
@@ -54,7 +54,7 @@ void build_clipped_from_pts_fortran_(const my_real* x_v, const my_real* y_v, con
     clipped = polygon_from_consecutive_points(x_v, y_v, nb_pts);
 }
 
-void compute_lambdas2d_fortran_(const my_real *dt, const long long *signed_id_cell, \
+void compute_lambdas2d_fortran_(const my_real *dt, \
                         my_real *ptr_lambdas_arr,   \
                         my_real *ptr_big_lambda_n,  \
                         my_real *ptr_big_lambda_np1,\
@@ -64,20 +64,16 @@ void compute_lambdas2d_fortran_(const my_real *dt, const long long *signed_id_ce
     Vector_double *Lambda_n = alloc_empty_vec_double();
     Vector_double *Lambda_np1 = alloc_empty_vec_double();
 
-    uint64_t id_cell = (uint64_t) *signed_id_cell;
-    uint64_t nb_pts;
-    nb_pts = clipped->vertices->size; //TODO: problem when correcting auto-intersection : points are suppressed!
-
-    compute_lambdas2D(grid, clipped3D, nb_pts, id_cell, *dt, &lambdas, &Lambda_n, &Lambda_np1, mean_normal, is_narrowband);
+    compute_lambdas2D(grid, clipped3D, *dt, &lambdas, &Lambda_n, &Lambda_np1, mean_normal, is_narrowband);
 
     memcpy(ptr_lambdas_arr, lambdas->data, lambdas->ncols*lambdas->nrows*sizeof(my_real));
 
     memcpy(ptr_big_lambda_n, Lambda_n->data, Lambda_n->size*sizeof(my_real));
     memcpy(ptr_big_lambda_np1, Lambda_np1->data, Lambda_np1->size*sizeof(my_real));
 
-    dealloc_arr_double(lambdas);
-    dealloc_vec_double(Lambda_n);
-    dealloc_vec_double(Lambda_np1);
+    dealloc_arr_double(lambdas); free(lambdas);
+    dealloc_vec_double(Lambda_n); free(Lambda_n);
+    dealloc_vec_double(Lambda_np1); free(Lambda_np1);
 }
 
 
@@ -92,74 +88,32 @@ void nb_edge_clipped_fortran_(long long int* signed_nb_edges_solid){
     *signed_nb_edges_solid = ((long long) nb);
 }
 
-void compute_normals_clipped_fortran_(my_real* normalVecx, my_real* normalVecy, long long* signed_nb_pts, \
-                                        my_real* normalVecEdgex, my_real* normalVecEdgey, long long* signed_nb_edges, \
+void compute_normals_clipped_fortran_(my_real* normalVecx, my_real* normalVecy, \
+                                        my_real* normalVecEdgex, my_real* normalVecEdgey, \
                                         my_real* min_pos_Se){
 
-    unsigned long j;
-    GrB_Info infogrb;
-    GrB_Vector ej, extr_vals_ej;
-    GrB_Vector nz_ej;
-    GrB_Index size_nz_ej;
-    unsigned long pt_index1, pt_index2;
-    Point2D *pt1, *pt2;
-    int8_t sign;
-    my_real normVec;
+    Vector_points2D* normals_pts;
+    Vector_points2D* normals_edges;
+    GrB_Index nb_pts, nb_edges;
+    uint64_t i;
 
-    unsigned long nb_pts = ((unsigned long) *signed_nb_pts);
-    unsigned long nb_edges = ((unsigned long) *signed_nb_edges);
+    GrB_Matrix_nrows(&nb_pts, *(clipped->edges));
+    GrB_Matrix_ncols(&nb_edges, *(clipped->edges));
+    normals_pts = alloc_with_capacity_vec_pts2D(nb_pts);
+    normals_edges = alloc_with_capacity_vec_pts2D(nb_edges);
+    compute_all_normals2D(clipped, normals_pts, normals_edges, min_pos_Se);
 
-    infogrb = GrB_Vector_new(&ej, GrB_INT8, nb_pts);
-    infogrb = GrB_Vector_new(&nz_ej, GrB_UINT64, nb_pts);
-    infogrb = GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_edges);
-
-    *min_pos_Se = -1.0;
-
-    for (j=0; j<nb_edges; j++){
-        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(clipped->edges), GrB_ALL, 1, j, GrB_NULL); 
-        infogrb = GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
-        infogrb = GrB_Vector_size(&size_nz_ej, nz_ej);
-
-        if (size_nz_ej > 1){
-            infogrb = GrB_Vector_extractElement(&pt_index1, nz_ej, 0); 
-            infogrb = GrB_Vector_extractElement(&pt_index2, nz_ej, 1); 
-            pt1 = get_ith_elem_vec_pts2D(clipped->vertices, pt_index1);
-            pt2 = get_ith_elem_vec_pts2D(clipped->vertices, pt_index2);
-
-            //Choice of normal: take the normal to the "edge" containing the point, sum of the adjacent edges
-            GrB_Matrix_extractElement(&sign, *(clipped->edges), pt_index1, j);
-            normalVecx[pt_index1] -= sign * pt1->y;
-            normalVecy[pt_index1] += sign * pt1->x;
-            normalVecx[pt_index2] -= sign * pt1->y;
-            normalVecy[pt_index2] += sign * pt1->x;
-            normalVecEdgex[j] -= sign * pt1->y;
-            normalVecEdgey[j] += sign * pt1->x;
-
-            GrB_Matrix_extractElement(&sign, *(clipped->edges), pt_index2, j);
-            normalVecx[pt_index1] -= sign * pt2->y;
-            normalVecy[pt_index1] += sign * pt2->x;
-            normalVecx[pt_index2] -= sign * pt2->y;
-            normalVecy[pt_index2] += sign * pt2->x;
-            normalVecEdgex[j] -= sign * pt2->y;
-            normalVecEdgey[j] += sign * pt2->x;
-
-            normVec = sqrt(normalVecEdgex[j]*normalVecEdgex[j] + normalVecEdgey[j]*normalVecEdgey[j]);
-            if (normVec > 0.){
-                normalVecEdgex[j] /= normVec;
-                normalVecEdgey[j] /= normVec;
-
-                if (*min_pos_Se > 0.){
-                    if (normVec < *min_pos_Se)
-                        *min_pos_Se = normVec;
-                } else {
-                    *min_pos_Se = normVec;
-                }
-            }
-        }
+    for(i=0; i<normals_pts->size; i++){
+        normalVecx[i] = normals_pts->points[i].x;
+        normalVecy[i] = normals_pts->points[i].y;
     }
-    GrB_Vector_free(&ej);
-    GrB_Vector_free(&extr_vals_ej);
-    GrB_Vector_free(&nz_ej);
+    for(i=0; i<normals_edges->size; i++){
+        normalVecEdgex[i] = normals_edges->points[i].x;
+        normalVecEdgey[i] = normals_edges->points[i].y;
+    }
+
+    dealloc_vec_pts2D(normals_pts); free(normals_pts);
+    dealloc_vec_pts2D(normals_edges); free(normals_edges);
 }
 
 void smooth_vel_clipped_fortran_(my_real* vec_move_clippedx, my_real* vec_move_clippedy, my_real* min_pos_Se, my_real *dt){
@@ -189,21 +143,22 @@ void get_clipped_ith_vertex_fortran_(long long *k, Point2D *pt){
     *pt = *get_ith_elem_vec_pts2D(clipped->vertices, *k); 
 }
 
-void get_clipped_edges_ith_vertex_fortran_(long long *k, long long *signed_eR, long long *signed_eL){
+void get_clipped_edges_ith_vertex_fortran_(long long *k_signed, long long *signed_eR, long long *signed_eL){
     uint64_t eR, eL;
     GrB_Matrix e_k;
     GrB_Vector nz_e_k, extr_vals_e_k, I_vec_e_k;
     GrB_Index size_nz_e_k;
     GrB_Index nb_pts;
     GrB_Info infogrb;
+    GrB_Index k = (GrB_Index)(*k_signed);
 
     nb_pts = clipped->vertices->size;
 
     infogrb = GrB_Matrix_new(&e_k, GrB_INT8, 1, nb_pts);
     infogrb = GrB_Vector_new(&nz_e_k, GrB_UINT64, 2);
     infogrb = GrB_Vector_new(&extr_vals_e_k, GrB_INT8, 2);
-    infogrb = GrB_Vector_new(&I_vec_e_k, GrB_INT8, 2);
-    GrB_extract(e_k, GrB_NULL, GrB_NULL, *(clipped->edges), k, 1, GrB_ALL, 1, GrB_NULL); //Get indices of edges connected with point k
+    infogrb = GrB_Vector_new(&I_vec_e_k, GrB_UINT64, 2);
+    GrB_extract(e_k, GrB_NULL, GrB_NULL, *(clipped->edges), &k, 1, GrB_ALL, 1, GrB_NULL); //Get indices of edges connected with point k
     GxB_Matrix_extractTuples_Vector(I_vec_e_k, nz_e_k, extr_vals_e_k, e_k, GrB_NULL);
     GrB_Vector_size(&size_nz_e_k, nz_e_k);
     if (size_nz_e_k == 2){ //Exactly two edges connected to the point k
