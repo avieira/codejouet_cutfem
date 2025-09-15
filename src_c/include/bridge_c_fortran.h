@@ -39,6 +39,7 @@ void compute_normals_clipped_fortran_(my_real* normalVecx, my_real* normalVecy, 
 void smooth_vel_clipped_fortran_(my_real* vec_move_clippedx, my_real* vec_move_clippedy, my_real* min_pos_Se, my_real *dt);
 void get_clipped_ith_vertex_fortran_(long long int *k, Point2D *pt);
 void get_clipped_edges_ith_vertex_fortran_(long long int *k, long long int *signed_eR, long long int *signed_eL);
-void update_clipped_fortran_(const my_real* vec_move_clippedy, const my_real* vec_move_clippedz, const my_real* dt, const my_real *dx);
+void update_clipped_fortran_(const my_real* vec_move_clippedy, const my_real* vec_move_clippedz, const my_real* dt, \
+                            my_real *minimal_length, my_real *maximal_length, my_real *minimal_angle);
 
 #endif

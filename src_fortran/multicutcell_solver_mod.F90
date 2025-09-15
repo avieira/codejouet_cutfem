@@ -616,7 +616,8 @@ module multicutcell_solver_mod
     nb_cell = NUMELQ+NUMELTG !size(vely, 1)
     do i = 1,nb_pts_clipped
       call get_clipped_ith_vertex_fortran(i, pt) 
-      
+      is_inside = .true.
+
       do j = 1,nb_cell
         if (any(grid(i, :)%is_narrowband)) then
           call compute_normals(NUMELQ, NUMELTG, IXQ, IXTG, X, j, normals, nb_normals)
@@ -625,6 +626,10 @@ module multicutcell_solver_mod
           do k=1,nb_normals
             pt_grid%y = X(2, IXQ(k+1, j))
             pt_grid%z = X(3, IXQ(k+1, j))
+            if ((pt%y == pt_grid%y) .and. (pt%z == pt_grid%z)) then
+              is_inside = .true.
+              exit
+            end if
             d = normals(k)%y*(pt_grid%y-pt%y) + normals(k)%z*(pt_grid%z-pt%z)
             !d = d/sqrt(normals(k)%y*normals(k)%y + normals(k)%z*normals(k)%z)
             if (d<0) then
@@ -676,7 +681,9 @@ module multicutcell_solver_mod
     do k = 1,nb_pts_clipped
       call get_clipped_ith_vertex_fortran(k, pt)
       call get_clipped_edges_ith_vertex_fortran(k, eR, eL) 
-      if ((eR>-1) .and. (eL>-1)) then !point k is part of an edge
+      eR = eR+1 !C is 0-indexed, Fortran is 1 indexed...
+      eL = eL+1
+      if ((eR>0) .and. (eL>0)) then !point k is part of an edge
         i = id_pt_cell(k)
         rhoL = rho(i, 1)
         velyL = vely(i, 1)
@@ -695,8 +702,8 @@ module multicutcell_solver_mod
                                   normalVecEdgey(eL), normalVecEdgez(eL), uLEdge, vLEdgeL, vLEdgeR, pEdgeL)
         call solve_riemann_problem(gamma, rhoL, rhoR, velyL, velyR, velzL, velzR, pL, pR, 2, &
                                   normalVecEdgey(eR), normalVecEdgez(eR), uREdge, vREdgeL, vREdgeR, pEdgeR)
-        pressure_edge(eL+1) = pEdgeL !+1 because C is 0-indexed and fortran is 1-indexed...
-        pressure_edge(eR+1) = pEdgeR !+1 because C is 0-indexed and fortran is 1-indexed...
+        pressure_edge(eL) = pEdgeL 
+        pressure_edge(eR) = pEdgeR 
       
         vec_move_clippedy(k) = us * normalVecy(k) - 0.5 * (vsL + vsR) * normalVecz(k) !Choice of the mean of left and right tangential velocities, another choice could be made!
         vec_move_clippedz(k) = us * normalVecz(k) + 0.5 * (vsL + vsR) * normalVecy(k) !Choice of the mean of left and right tangential velocities, another choice could be made!
@@ -716,7 +723,6 @@ module multicutcell_solver_mod
     use grid2D_struct_multicutcell_mod
     use ALE_CONNECTIVITY_MOD
   
-    !Manuel : chercher analy pour les normales
     IMPLICIT NONE
   
     ! INPUT arguments
@@ -765,10 +771,14 @@ module multicutcell_solver_mod
     type(Point2D) :: mean_normal
     integer(kind=2) :: odd_k
     integer(kind=8), dimension(:), allocatable :: id_pt_cell
+    my_real minimal_length, maximal_length, minimal_angle
     
     dx = sqrt(minval(grid(:, 1)%area))
     nb_cell = NUMELQ+NUMELTG !size(vely, 1)
     nb_regions = size(vely, 2)
+    minimal_length = 0.5*dx
+    maximal_length = dx
+    minimal_angle = ATAN(1.d0) !pi/4
   
     call nb_pts_clipped_fortran(nb_pts_clipped)
     call nb_edge_clipped_fortran(nb_edge_clipped)
@@ -810,7 +820,7 @@ module multicutcell_solver_mod
                                 vec_move_clippedy, vec_move_clippedz, pressure_edge)
   
     call smooth_vel_clipped_fortran(vec_move_clippedy, vec_move_clippedz, min_pos_Se, dt)
-    call update_clipped_fortran(vec_move_clippedy, vec_move_clippedz, dt, dx)
+    call update_clipped_fortran(vec_move_clippedy, vec_move_clippedz, dt, minimal_length, maximal_length, minimal_angle)
   
     call nb_pts_clipped_fortran(nb_pts)
 
@@ -903,6 +913,62 @@ module multicutcell_solver_mod
     deallocate(id_pt_cell)
   
   end subroutine update_fluid
+
+  !(y_polygon, z_polygon) are the coordinates of successive points forming the polygonal interface.
+  subroutine initialize_solver(N2D, NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, ITAB, ALE_CONNECT, &
+                              grid, y_polygon, z_polygon)
+    use grid2D_struct_multicutcell_mod
+    use ALE_CONNECTIVITY_MOD
+
+    implicit none
+    integer :: N2D, NUMELQ, NUMELTG, NUMNOD
+    integer, dimension(:,:) :: IXQ, IXTG
+    integer, dimension(:) :: ITAB
+    my_real, dimension(:,:) :: X
+    TYPE(t_ale_connectivity), INTENT(IN) :: ALE_CONNECT
+    type(grid2D_struct_multicutcell), dimension(:, :), allocatable :: grid
+    my_real, dimension(:) :: y_polygon, z_polygon
+
+    !DUMMY ARGUMENTS
+    integer nb_cell, nb_regions, nb_pts_poly
+    integer i, k
+    my_real, dimension(:), allocatable :: vec_move_clippedy, vec_move_clippedz
+    my_real dt, minimal_length, minimal_angle, maximal_length
+
+    dt = 1.0
+    minimal_length = -1.
+    minimal_angle = -1.
+    maximal_length = 1.
+    maximal_length = huge(maximal_length)
+
+    nb_cell = NUMELQ+NUMELTG !size(vely, 1)
+    nb_regions = 2
+    nb_pts_poly = size(y_polygon)
+    allocate(grid(nb_cell, nb_regions))
+
+    call launch_grb() !C call
+    do i=1,nb_cell
+      do k=1,nb_regions
+        grid(i,k) = makegrid(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, i)
+      end do
+    end do
+
+    call build_clipped_from_pts_fortran(y_polygon, z_polygon, nb_pts_poly)
+    
+    allocate(vec_move_clippedy(nb_pts_poly))
+    allocate(vec_move_clippedz(nb_pts_poly))
+    vec_move_clippedy(:) = 0.
+    vec_move_clippedz(:) = 0.
+
+    call update_clipped_fortran(vec_move_clippedy, vec_move_clippedz, dt, minimal_length, maximal_length, minimal_angle) !initialize clipped3D in C.
+    call compute_lambdas(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, grid, dt) !initialize lambda fields, close_cell and is_narrowband in grid
+  end
+
+  subroutine deallocate_solver()
+    call end_grb() !C call
+  end
+
+
 end module multicutcell_solver_mod
 
 #undef NOT_FUSED 

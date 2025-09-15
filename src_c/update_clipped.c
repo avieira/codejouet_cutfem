@@ -1274,7 +1274,7 @@ static Polyhedron3D* build_space_time_cell_with_intersection(const Polygon2D* fn
 ///          2 the face created at t^{n+1}, and i+2 the face created in time-space from edge i.
 /// @param fn [IN] polygon at time t^n
 /// @param vs* [IN] Vector translating points of `fn` over time `dt` to form the polygon at time t^{n+1}
-/// @param dt [IN] time-step
+/// @param dt [IN] time-step 
 /// @param split [IN] flag to triangulate (or not) faces in time linking the edges at time t^n and t^{n+1}.
 Polyhedron3D* build_space2D_time_cell(const Polygon2D *fn, const my_real *vsx, const my_real* vsy, uint64_t size_vs, const my_real dt, bool split, Array_int *list_del_pts){
     Vector_points2D* vertices_tnp1 = build_vertices_tnp1(fn, vsx, vsy, size_vs, dt, list_del_pts);
@@ -1491,10 +1491,16 @@ void update_solid(Polygon2D **solid, Polyhedron3D** solid3D, const my_real* vec_
         }
 
         //Finally, create 3D space-time solid interface using these two polygons.
+        if (*solid3D){
+            dealloc_Polyhedron3D(*solid3D); free(*solid3D);
+        }
         *solid3D = build_space_time_cell_with_intersection(*solid, solid_tnp1, dt, pt_in_or_out_split, pt_in_or_out_fuse);
     } else {
-        solid_new = solid_tnp1;
+        copy_Polygon2D(solid_tnp1, solid_new);
         //Create 3D space-time solid interface
+        if (*solid3D){
+            dealloc_Polyhedron3D(*solid3D); free(*solid3D);
+        }
         *solid3D = build_space_time_cell_given_tnp1_vertices(*solid, vertices_tnp1, dt, true);
         for(i=0; i<(*solid3D)->status_face->size; i++){
             if ((*solid3D)->status_face->data[i] > 2)

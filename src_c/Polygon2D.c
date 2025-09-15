@@ -371,12 +371,12 @@ void retrieve_ith_edge2D(Vector_points2D *vertices, GrB_Matrix* edges, int i, Po
     GrB_Vector nz_ei;
     GrB_Vector extr_vals_ei;
     GrB_Index i_pt0, i_pt1;
-    GrB_Index nb_edges;
+    GrB_Index nb_pts;
 
-    GrB_Matrix_ncols(&nb_edges, *edges);
-    infogrb = GrB_Vector_new(&ei, GrB_INT8, nb_edges);
-    infogrb = GrB_Vector_new(&nz_ei, GrB_UINT64, 2);
-    infogrb = GrB_Vector_new(&extr_vals_ei, GrB_INT8, 2);
+    GrB_Matrix_nrows(&nb_pts, *edges);
+    infogrb = GrB_Vector_new(&ei, GrB_INT8, nb_pts);
+    infogrb = GrB_Vector_new(&nz_ei, GrB_UINT64, nb_pts);
+    infogrb = GrB_Vector_new(&extr_vals_ei, GrB_INT8, nb_pts);
     
     infogrb = GrB_extract(ei, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, i, GrB_NULL); //Get indices of points composing edge i
     infogrb = GxB_Vector_extractTuples_Vector(nz_ei, extr_vals_ei, ei, GrB_NULL);
@@ -620,13 +620,13 @@ void clean_Polygon2D(const Polygon2D* p, Polygon2D** res_p){
         if (ind_kept_pts->size>1){
             ncols_new_edges = size_edge_indices;
             //Rebuild matrix of edges in face i only
-            nrows_new_edges = *get_ith_elem_vec_uint(ind_kept_pts, ind_kept_pts->size-1);
+            nrows_new_edges = ind_kept_pts->size;
             GrB_Vector_resize(grb_ind_kept_pts, ind_kept_pts->size);
             for(ell=0; ell<ind_kept_pts->size; ell++){
                 GrB_Vector_setElement(grb_ind_kept_pts, *get_ith_elem_vec_uint(ind_kept_pts, ell), ell);
             }
             GrB_Matrix_resize(new_edges, nrows_new_edges, ncols_new_edges);
-            GrB_extract(new_edges, GrB_NULL, GrB_NULL, *(p->edges), grb_ind_kept_pts, edge_indices, GrB_NULL);
+            infogrb = GrB_extract(new_edges, GrB_NULL, GrB_NULL, *(p->edges), grb_ind_kept_pts, edge_indices, GrB_NULL);
 
             //Rebuild matrix for face i only
             //new_faces = p.faces[edge_indices, i]

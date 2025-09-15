@@ -141,6 +141,7 @@ module integer_LL_mod
   end subroutine integer_LL_copy
   
   subroutine integer_LL_destroy( list )
+    implicit none
     type(integer_LL_), pointer :: list
   
     type(integer_LL_), pointer  :: current
@@ -161,6 +162,8 @@ module integer_LL_mod
   end subroutine integer_LL_destroy
 
   subroutine integer_LL_delete_element( list, elem )
+    implicit none
+
     type(integer_LL_), pointer :: list
     type(integer_LL_), pointer :: elem
 
@@ -186,6 +189,8 @@ module integer_LL_mod
   end subroutine integer_LL_delete_element  
 
   subroutine integer_LL_delete_value( list, val )
+    implicit none 
+
     type(integer_LL_), pointer :: list
     integer(kind=8), intent(in)  :: val
 

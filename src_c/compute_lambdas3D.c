@@ -135,12 +135,12 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
         set_ith_elem_vec_pts3D(*lambdas, j, &pt);
     }
 
-    norm_vec_poly = points3D_from_matrix(surfaces_poly3D(p));
-    
     *mean_normal = (Point3D){0.0, 0.0, 0.0};
     *is_narrowband = false;
     
     if(p){
+        norm_vec_poly = points3D_from_matrix(surfaces_poly3D(p));
+    
         GrB_Matrix_ncols(&nb_cols_vol, *(p->volumes)); 
         GrB_Matrix_ncols(&nb_cols_fac, *(p->faces)); 
         for(i=0; i<nb_cols_fac; i++){
@@ -170,8 +170,8 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
         }
     }
 
-    dealloc_vec_pts3D(norm_vec_poly); free(norm_vec_poly);
     if(p){
+        dealloc_vec_pts3D(norm_vec_poly); free(norm_vec_poly);
         dealloc_Polyhedron3D(p); free(p);
     }
 }
@@ -234,7 +234,7 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
     cell3D = build_space2D_time_cell(grid, vec_move_gridx, vec_move_gridy, grid->vertices->size, dt, false, NULL);
     surfaces = points3D_from_matrix(surfaces_poly3D(cell3D));
 
-    if (clipped3D->vertices->size>2){
+    if ((clipped3D) && (clipped3D->vertices->size>2)){
         //GrB_Matrix_ncols(&nb_clipped_faces, *(clipped->faces));
         //for (i=0; i<nb_clipped_faces; i++){
             //mini_clipped = extract_ith_face(clipped, i);
@@ -292,16 +292,24 @@ void compute_lambdas2D(const Polygon2D* grid, const Polyhedron3D *clipped3D, con
             set_ith_elem_vec_double(*big_lambda_np1, k, &nm);
         }
 
+        printf("surfaces = ");
+        print_vec_pt3D(*surfaces);
+        printf("occupied_area = ");
+        print_vec_pt3D(*occupied_area);
+
         for (i=2; i<nb_edge + 2; i++){
             area = get_ith_elem_vec_pts3D(surfaces, i);
             occupied = get_ith_elem_vec_pts3D(occupied_area, i);
             *val = fmax(0., norm_pt3D(*area) - norm_pt3D(*occupied));
             set_ijth_elem_arr_double(*lambdas_arr, i-2, 0, val);
+            printf("i-2 = %ld, val = %lf, ", i-2, *val);
             for(k = 1; k<nb_regions; k++){
                 nm = norm_pt3D(*get_ijth_elem_arr_pts3D(local_lambdas, i, k-1));
                 set_ijth_elem_arr_double(*lambdas_arr, i-2, k, &nm); 
+                printf("nm = %lf\n", nm);
             }
         }
+        printf("\n");
     } else {
         i = 0;
         *val = norm_pt3D(*get_ith_elem_vec_pts3D(surfaces, i));

@@ -36,7 +36,6 @@ program main
   allocate(X(3, NUMNOD))
   allocate(ALE_CONNECT%ee_connect%iad_connect(NUMELQ + 1))
   allocate(ALE_CONNECT%ee_connect%connected(4*NUMELQ))
-  allocate(grid(NUMELQ, 2))
   allocate(vely(NUMELQ, 2))
   allocate(velz(NUMELQ, 2))
   allocate(rho(NUMELQ, 2))
@@ -78,16 +77,36 @@ program main
   xp(:) = (/0.5, 1.5, 1.5, 0.5/)
   yp(:) = (/0.5, 0.5, 1.5, 1.5/)
 
-  call build_clipped_from_pts_fortran(xp, yp, 4)
-
-  do i=1,NUMELQ
-    grid(i, :) = makegrid(NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, i)
-  end do
+  call initialize_solver(N2D, NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, ITAB, ALE_CONNECT, &
+                              grid, xp, yp)
 
   call update_fluid(N2D, NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, ITAB, ALE_CONNECT, &
                           grid, vely, velz, rho, p, gamma, dt, threshold, sign)
 
-  call end_grb()
+  do i=1,4
+    write(*,*) "grid(i, :)%lambdan_per_cell = ", grid(i, :)%lambdan_per_cell
+    write(*,*) "grid(i, 1)%normal_intern_face_space = ", grid(i, 1)%normal_intern_face_space
+    write(*,*) "grid(i, 2)%normal_intern_face_space = ", grid(i, 2)%normal_intern_face_space
+    write(*,*) "grid(i, 1)%lambda_per_edge = ", grid(i, 1)%lambda_per_edge
+    write(*,*) "grid(i, 2)%lambda_per_edge = ", grid(i, 2)%lambda_per_edge
+    write(*,*)
+  end do
+
+
+  call deallocate_solver()
+
+  deallocate(IXQ)
+  deallocate(IXTG)
+  deallocate(ITAB)
+  deallocate(X)
+  deallocate(ALE_CONNECT%ee_connect%iad_connect)
+  deallocate(ALE_CONNECT%ee_connect%connected)
+  deallocate(vely)
+  deallocate(velz)
+  deallocate(rho)
+  deallocate(p)
+  deallocate(xp)
+  deallocate(yp)
 end program main
 
 

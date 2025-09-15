@@ -884,11 +884,11 @@ void clean_Polyhedron3D(const Polyhedron3D* p, Polyhedron3D** res_p){
     GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_pts);
 
     for(k=0; k<nb_volumes; k++){
-        infogrb = GrB_extract(vj, GrB_NULL, GrB_NULL, *(p->volumes), GrB_ALL, 1, i, GrB_NULL); //Get indices of faces composing volume k
+        infogrb = GrB_extract(vj, GrB_NULL, GrB_NULL, *(p->volumes), GrB_ALL, 1, k, GrB_NULL); //Get indices of faces composing volume k
         infogrb = GxB_Vector_extractTuples_Vector(face_indices, extr_vals_vj, vj, GrB_NULL);
         infogrb = GrB_Vector_size(&size_face_indices, face_indices);
         ind_kept_pts->size = 0;
-        for (i_v=0; i_v<nb_faces; i_v++){
+        for (i_v=0; i_v<size_face_indices; i_v++){
             infogrb = GrB_Vector_extractElement(&i, face_indices, i_v);
 
             infogrb = GrB_extract(fj, GrB_NULL, GrB_NULL, *(p->faces), GrB_ALL, 1, i, GrB_NULL); //Get indices of edges composing face i
@@ -923,29 +923,27 @@ void clean_Polyhedron3D(const Polyhedron3D* p, Polyhedron3D** res_p){
         }
         
         //new_edges = p.edges[ind_kept_pts, grb_edge_indices]
-        //GrB_reduce(&ncols_new_edges, GrB_NULL, GrB_MAX_MONOID_UINT64, grb_edge_indices, GrB_NULL);
-        //GrB_reduce(&ncols_new_faces, GrB_NULL, GrB_MAX_MONOID_UINT64, face_indices, GrB_NULL);
         if (ind_kept_pts->size>1){
-            ncols_new_edges = size_grb_edge_indices;
+            ncols_new_edges = edge_indices->size;
             ncols_new_faces = size_face_indices;
-            nrows_new_edges = *get_ith_elem_vec_uint(ind_kept_pts, ind_kept_pts->size-1);
+            nrows_new_edges = ind_kept_pts->size;
             GrB_Vector_resize(grb_ind_kept_pts, ind_kept_pts->size);
             for(ell=0; ell<ind_kept_pts->size; ell++){
-                GrB_Vector_setElement(grb_ind_kept_pts, *get_ith_elem_vec_uint(ind_kept_pts, ell), ell);
+                infogrb = GrB_Vector_setElement(grb_ind_kept_pts, *get_ith_elem_vec_uint(ind_kept_pts, ell), ell);
             }
             GrB_Vector_resize(grb_edge_indices, edge_indices->size);
             for (j_f=0; j_f<edge_indices->size; j_f++){
-                GrB_Vector_setElement(grb_edge_indices, *get_ith_elem_vec_uint(edge_indices, j_f), j_f);
+                infogrb = GrB_Vector_setElement(grb_edge_indices, *get_ith_elem_vec_uint(edge_indices, j_f), j_f);
             }
             GrB_Matrix_resize(new_edges, nrows_new_edges, ncols_new_edges);
-            GrB_extract(new_edges, GrB_NULL, GrB_NULL, *(p->edges), grb_ind_kept_pts, grb_edge_indices, GrB_NULL);
+            infogrb = GrB_extract(new_edges, GrB_NULL, GrB_NULL, *(p->edges), grb_ind_kept_pts, grb_edge_indices, GrB_NULL);
 
             //new_faces = p.faces[grb_edge_indices, i]
-            GrB_Matrix_resize(new_faces, nrows_new_edges, ncols_new_faces);
-            GrB_extract(new_faces, GrB_NULL, GrB_NULL, *(p->faces), grb_edge_indices, face_indices, GrB_NULL);
-            GrB_Matrix_resize(new_faces, ncols_new_faces, 1);
+            GrB_Matrix_resize(new_faces, ncols_new_edges, ncols_new_faces);
+            infogrb = GrB_extract(new_faces, GrB_NULL, GrB_NULL, *(p->faces), grb_edge_indices, face_indices, GrB_NULL);
+            GrB_Matrix_resize(new_volumes, ncols_new_faces, 1);
             GrB_Vector_setElement(justone, 0, k);
-            GrB_extract(new_volumes, GrB_NULL, GrB_NULL, *(p->volumes), face_indices, justone, GrB_NULL);
+            infogrb = GrB_extract(new_volumes, GrB_NULL, GrB_NULL, *(p->volumes), face_indices, justone, GrB_NULL);
         
 
             if (new_status_face){

@@ -14,14 +14,20 @@ Polygon2D* clipped = NULL;
 Polyhedron3D* clipped3D = NULL;
 
 void launch_grb_(){
-    GrB_init(GrB_NONBLOCKING);
-    //GrB_init(GrB_BLOCKING);
+    //GrB_init(GrB_NONBLOCKING);
+    GrB_init(GrB_BLOCKING);
 }
 
 void end_grb_(){
-    dealloc_Polygon2D(grid); free(grid);
-    dealloc_Polygon2D(clipped); free(clipped);
-    dealloc_Polyhedron3D(clipped3D); free(clipped3D);
+    if(grid) {
+        dealloc_Polygon2D(grid); free(grid); grid = NULL;
+    }
+    if(clipped){
+        dealloc_Polygon2D(clipped); free(clipped); clipped = NULL;
+    }
+    if(clipped3D){
+        dealloc_Polyhedron3D(clipped3D); free(clipped3D); clipped3D = NULL;
+    }
 
     GrB_finalize();
 }
@@ -44,10 +50,10 @@ void build_grid_from_points_fortran_(const my_real* x_v, const my_real* y_v, con
     }
 }
 
-/// @brief 
-/// @param x_v 
-/// @param y_v 
-/// @param signed_nb_pts 
+/// @brief Take consecutive points to build a polygon.
+/// @param x_v array of x-coordinates of size signed_nb_pts
+/// @param y_v array of y-coordinates of size signed_nb_pts 
+/// @param signed_nb_pts size of the arrays (and number of points).
 void build_clipped_from_pts_fortran_(const my_real* x_v, const my_real* y_v, const long long int *signed_nb_pts){
     const unsigned long nb_pts = (unsigned long) *signed_nb_pts;
     
@@ -176,13 +182,11 @@ void get_clipped_edges_ith_vertex_fortran_(long long *k_signed, long long *signe
     GrB_free(&I_vec_e_k);      
 }                              
                                
-void update_clipped_fortran_(const my_real* vec_move_clippedy, const my_real* vec_move_clippedz, const my_real* dt, const my_real *dx){
-    const my_real minimal_length = *dx * 0.1;
-    const my_real maximal_length = *dx * 2;
-    const my_real minimal_angle = 0.1*M_PI;
+void update_clipped_fortran_(const my_real* vec_move_clippedy, const my_real* vec_move_clippedz, const my_real* dt, \
+                            my_real *minimal_length, my_real *maximal_length, my_real *minimal_angle){
 
     update_solid(&clipped, &clipped3D, vec_move_clippedy, vec_move_clippedz, *dt, \
-                    minimal_length, maximal_length, minimal_angle);
+                    *minimal_length, *maximal_length, *minimal_angle);
 }                              
                                
                                
