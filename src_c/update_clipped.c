@@ -935,7 +935,7 @@ static Polyhedron3D* build_space_time_cell_given_tnp1_vertices(const Polygon2D* 
     GrB_Vector_new(&extr_vals_fj, GrB_INT8, nb_edges);
     if (split){ //Each edge in 2D is turned into 2 faces (triangulation)
         //Now, we create the diagonal edges, and create all faces between t=tn and t=tn+dt
-        for(j=0; j<nb_rows_faces; j++){
+        for(j=0; j<nb_cols_faces; j++){
             GrB_extract(fj, GrB_NULL, GrB_NULL, *(fn->faces), GrB_ALL, 1, j, GrB_NULL); //Get indices of edges composing face i
             GxB_Vector_extractTuples_Vector(edge_indices, extr_vals_fj, fj, GrB_NULL);
             GrB_Vector_size(&size_edge_indices, edge_indices);

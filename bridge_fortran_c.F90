@@ -85,6 +85,7 @@ program main
 
   do i=1,4
     write(*,*) "grid(i, :)%lambdan_per_cell = ", grid(i, :)%lambdan_per_cell
+    write(*,*) "grid(i, :)%lambdanp1_per_cell = ", grid(i, :)%lambdanp1_per_cell
     write(*,*) "grid(i, 1)%normal_intern_face_space = ", grid(i, 1)%normal_intern_face_space
     write(*,*) "grid(i, 2)%normal_intern_face_space = ", grid(i, 2)%normal_intern_face_space
     write(*,*) "grid(i, 1)%lambda_per_edge = ", grid(i, 1)%lambda_per_edge
