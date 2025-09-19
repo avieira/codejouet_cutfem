@@ -456,8 +456,8 @@ static Vector_points2D* compute_length_edges2D(const GrB_Matrix* edges, const Ve
 //Compute the surface normals
 static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_Matrix* edges, const GrB_Matrix* faces){
     //const unsigned int d=2;
-    GrB_Index nf, j, e0, p0, p, size_nze0;
-    GrB_Info infogrb, infoit;
+    GrB_Index nf, j, e0, p0, p, size_nze0, ell;
+    GrB_Info infogrb;
     GrB_Vector surfaces;
     Vector_points2D* length_edges = compute_length_edges2D(edges, points);//=((p.edges)' * p.vertices)'
     GrB_Vector fj, ee0;
@@ -465,13 +465,10 @@ static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_M
     GrB_Vector extr_vals_fj, extr_vals_ee0;
     my_real newval;
     Point2D *x0, *xe, *len_ei;
-    GxB_Iterator iterator;
     form_struct tf;
     int8_t sign;
-    GrB_Index nb_edges;
+    GrB_Index nb_edges, size_nz_fj;
     const uint64_t nb_pts = points->size;
-
-    GxB_Iterator_new(&iterator) ;
 
     infogrb = GrB_Matrix_ncols(&nf, *faces);
     infogrb = GrB_Matrix_ncols(&nb_edges, *edges);
@@ -486,57 +483,43 @@ static GrB_Vector surfaces_poly2D_pef(const Vector_points2D* points, const GrB_M
     for (j=0; j<nf; j++){
         infogrb = GrB_extract(fj, GrB_NULL, GrB_NULL, *faces, GrB_ALL, 1, j, GrB_NULL); //Get indices of edges composing face j
         infogrb = GxB_Vector_extractTuples_Vector(nz_fj, extr_vals_fj, fj, GrB_NULL);
-        infoit = GxB_Vector_Iterator_attach (iterator, nz_fj, GrB_NULL);
+        infogrb = GrB_Vector_nvals(&size_nz_fj, nz_fj);
 
-        if (infoit == GrB_SUCCESS){ //Face j not empty
-            infoit = GxB_Vector_Iterator_seek(iterator, 0);
-            //infogrb = GrB_Vector_extractElement(&e0, nz_fj, 0);
-            e0 = GxB_Iterator_get_UINT64(iterator);//Index of first edge in face j
+        if(size_nz_fj>0){
+            infogrb = GrB_Vector_extractElement(&e0, nz_fj, 0);
 
             infogrb = GrB_extract(ee0, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, e0, GrB_NULL); //Point indices of first edge of face j
             infogrb = GxB_Vector_extractTuples_Vector(nz_e0, extr_vals_ee0, ee0, GrB_NULL);
             infogrb = GrB_Vector_size(&size_nze0, nz_e0);
-            infoit = GxB_Vector_Iterator_next (iterator) ; //Move on to next edge in face
-            while ((size_nze0 == 0) && (infoit != GxB_EXHAUSTED)) {//In case the first edge is empty: check until you find one not empty
-                e0 = GxB_Iterator_get_UINT64(iterator);//Index of first edge in face j
-                infogrb = GrB_extract(ee0, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, e0, GrB_NULL); //Point indices of first edge of face j
-                infogrb = GxB_Vector_extractTuples_Vector(nz_e0, extr_vals_ee0, ee0, GrB_NULL);
-                infogrb = GrB_Vector_size(&size_nze0, nz_e0);
-                infoit = GxB_Vector_Iterator_next (iterator) ; //Move on to next edge in face
-            }
-
-            if(size_nze0 > 0){
+            if(size_nze0>0){
                 infogrb = GrB_Vector_extractElement(&p0, nz_e0, 0); //Index of first point of first edge of face j
                 x0 = get_ith_elem_vec_pts2D(points, p0); //First point of first edge of face j
-            }
 
-            while(infoit != GxB_EXHAUSTED){
-                e0 = GxB_Iterator_get_UINT64(iterator); //Index of next edge in face j
-                infogrb = GrB_extract(ee0, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, e0, GrB_NULL); //Point indices of next edge of face j
-                infogrb = GxB_Vector_extractTuples_Vector(nz_e0, extr_vals_ee0, ee0, GrB_NULL);
-                infogrb = GrB_Vector_size(&size_nze0, nz_e0);
-                infogrb = GxB_Vector_isStoredElement(ee0, p0);
-                if ((size_nze0>0) && (infogrb == GrB_NO_VALUE)){//Check if the edge has at least one point and the point x0 is not part of this edge.
-                    infogrb = GrB_Vector_extractElement(&p, nz_e0, 0); //Index of first point of next edge of face j
-                    xe = get_ith_elem_vec_pts2D(points, p);//First point of next edge of face j
-                    len_ei = get_ith_elem_vec_pts2D(length_edges, e0);
-                    tf = twoform2D((Point2D){xe->x-x0->x, xe->y-x0->y}, *len_ei);
-                    GrB_Matrix_extractElement(&sign, *faces, e0, j);
-                    //for (i=0; i<tf.n; i++)
-                    //    GrB_Vector_setElement(newcol, 0.5*sign*tf.v[i], i);
-                    //GrB_Col_assign(surfaces, GrB_NULL, GrB_PLUS_FP64, newcol, GrB_ALL, 3, j, GrB_NULL);//surfaces[:,j] += 0.5* nz_faces[k] * tf.v
-                    GrB_Vector_extractElement(&newval, surfaces, j);
-                    newval += 0.5*sign*tf.v[0];
-                    GrB_Vector_setElement(surfaces, newval, j);
-                    //free(tf.v);
-                    
-                    infoit = GxB_Vector_Iterator_next (iterator) ; //Move on to next edge in face
+                for(ell = 1; ell<size_nz_fj; ell++){
+                    infogrb = GrB_Vector_extractElement(&e0, nz_fj, ell);
+                    infogrb = GrB_extract(ee0, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, e0, GrB_NULL); //Point indices of next edge of face j
+                    infogrb = GxB_Vector_extractTuples_Vector(nz_e0, extr_vals_ee0, ee0, GrB_NULL);
+                    infogrb = GrB_Vector_size(&size_nze0, nz_e0);
+                    infogrb = GxB_Vector_isStoredElement(ee0, p0);
+                    if ((size_nze0>0) && (infogrb == GrB_NO_VALUE)){//Check if the edge has at least one point and the point x0 is not part of this edge.
+                        infogrb = GrB_Vector_extractElement(&p, nz_e0, 0); //Index of first point of next edge of face j
+                        xe = get_ith_elem_vec_pts2D(points, p);//First point of next edge of face j
+                        len_ei = get_ith_elem_vec_pts2D(length_edges, e0);
+                        tf = twoform2D((Point2D){xe->x-x0->x, xe->y-x0->y}, *len_ei);
+                        GrB_Matrix_extractElement(&sign, *faces, e0, j);
+                        //for (i=0; i<tf.n; i++)
+                        //    GrB_Vector_setElement(newcol, 0.5*sign*tf.v[i], i);
+                        //GrB_Col_assign(surfaces, GrB_NULL, GrB_PLUS_FP64, newcol, GrB_ALL, 3, j, GrB_NULL);//surfaces[:,j] += 0.5* nz_faces[k] * tf.v
+                        GrB_Vector_extractElement(&newval, surfaces, j);
+                        newval += 0.5*sign*tf.v[0];
+                        GrB_Vector_setElement(surfaces, newval, j);
+                        //free(tf.v);
+                    }
                 }
             }
         }
     }
 
-    GrB_free(&iterator);
     dealloc_vec_pts2D(length_edges); free(length_edges);
     GrB_free(&fj);
     GrB_free(&ee0);

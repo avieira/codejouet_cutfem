@@ -267,7 +267,7 @@ Polygon2D* polygon_from_consecutive_points(const my_real *x_v, const my_real* y_
         push_back_vec_pts2D(vertices, &pt);
         push_back_vec_int(status_edge, &zero);
     }
-    zero = 1;
+    zero = 2;
     for(i=0; i<nb_faces; i++){
         push_back_vec_int(phase_face, &zero);
     }
@@ -475,17 +475,15 @@ void compute_all_normals2D(const Polygon2D* p, Vector_points2D *normals_pts, Vec
     }
 
     if(normals_pts){
-        for(j=0; j<normals_pts->size; j++){
-            pt = get_ith_elem_vec_pts2D(normals_pts, j);
-            pt->x = 0.;
-            pt->y = 0.;
+        normal.x = 0.; normal.y = 0.;
+        for(j=0; j<nb_pts; j++){
+            set_ith_elem_vec_pts2D(normals_pts, j, &normal);
         }
     }
     if(normals_edges){
-        for(j=0; j<normals_edges->size; j++){
-            pt = get_ith_elem_vec_pts2D(normals_edges, j);
-            pt->x = 0.;
-            pt->y = 0.;
+        normal.x = 0.; normal.y = 0.;
+        for(j=0; j<nb_edges; j++){
+            set_ith_elem_vec_pts2D(normals_edges, j, &normal);
         }
     }
 
@@ -495,8 +493,6 @@ void compute_all_normals2D(const Polygon2D* p, Vector_points2D *normals_pts, Vec
         infogrb = GrB_Vector_size(&size_nz_ej, nz_ej);
 
         if (size_nz_ej > 1){
-            normal.x = 0;
-            normal.y = 0;
             infogrb = GrB_Vector_extractElement(&pt_index1, nz_ej, 0); 
             infogrb = GrB_Vector_extractElement(&pt_index2, nz_ej, 1); 
             pt1 = get_ith_elem_vec_pts2D(p->vertices, pt_index1);
@@ -518,7 +514,7 @@ void compute_all_normals2D(const Polygon2D* p, Vector_points2D *normals_pts, Vec
                 pt->y += sign * pt1->x;
             }
 
-            GrB_Matrix_extractElement(&sign, *(p->edges), pt_index1, j);
+            GrB_Matrix_extractElement(&sign, *(p->edges), pt_index2, j);
             if (normals_pts){
                 pt = get_ith_elem_vec_pts2D(normals_pts, pt_index1);
                 pt->x -= sign * pt2->y;
@@ -561,7 +557,7 @@ void clean_Polygon2D(const Polygon2D* p, Polygon2D** res_p){
     Vector_int *new_status_edge = NULL, *new_phase_face = NULL;
     GrB_Vector grb_ind_kept_pts, justone;
     GrB_Info infogrb;
-    GrB_Index nb_edges, nb_faces, size_edge_indices, size_pt_indices, val;
+    GrB_Index nb_edges, nb_faces, size_edge_indices, size_pt_indices, val, nb_pts;
     uint64_t ind_pt;
     GrB_Index ncols_new_edges, ell;
     uint64_t nrows_new_edges;
@@ -570,6 +566,7 @@ void clean_Polygon2D(const Polygon2D* p, Polygon2D** res_p){
 
     GrB_Matrix_ncols(&nb_faces, *(p->faces));
     GrB_Matrix_ncols(&nb_edges, *(p->edges));
+    GrB_Matrix_nrows(&nb_pts, *(p->edges));
     ind_kept_pts = alloc_empty_vec_uint();
     new_vertices = alloc_empty_vec_pts2D();
     GrB_Matrix_new(&new_edges, GrB_INT8, 1, 1);
@@ -579,9 +576,9 @@ void clean_Polygon2D(const Polygon2D* p, Polygon2D** res_p){
     GrB_Vector_new(&fj, GrB_INT8, nb_edges);
     GrB_Vector_new(&edge_indices, GrB_UINT64, nb_edges);
     GrB_Vector_new(&extr_vals_fj, GrB_INT8, nb_edges);
-    GrB_Vector_new(&ej, GrB_INT8, nb_edges);
-    GrB_Vector_new(&pt_indices, GrB_UINT64, nb_edges);
-    GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_edges);
+    GrB_Vector_new(&ej, GrB_INT8, nb_pts);
+    GrB_Vector_new(&pt_indices, GrB_UINT64, nb_pts);
+    GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_pts);
     new_phase_face = alloc_with_capacity_vec_int(1);
 
     for (i=0; i<nb_faces; i++){
@@ -606,13 +603,9 @@ void clean_Polygon2D(const Polygon2D* p, Polygon2D** res_p){
 
         //Rebuild list of vertices in face i only
         sort_vec_uint(ind_kept_pts);
-        if (ind_kept_pts->size > 0){
-            ind_pt = *get_ith_elem_vec_uint(ind_kept_pts, 0);
-            set_ith_elem_vec_pts2D(new_vertices, 0, get_ith_elem_vec_pts2D(p->vertices, ind_pt));
-            for (j_f=1; j_f<ind_kept_pts->size; j_f++){
-                ind_pt = *get_ith_elem_vec_uint(ind_kept_pts, j_f);
-                set_ith_elem_vec_pts2D(new_vertices, j_f, get_ith_elem_vec_pts2D(p->vertices, ind_pt));
-            }
+        for (j_f=0; j_f<ind_kept_pts->size; j_f++){
+            ind_pt = *get_ith_elem_vec_uint(ind_kept_pts, j_f);
+            set_ith_elem_vec_pts2D(new_vertices, j_f, get_ith_elem_vec_pts2D(p->vertices, ind_pt));
         }
         
         //new_edges = p.edges[ind_kept_pts, edge_indices]
@@ -631,9 +624,8 @@ void clean_Polygon2D(const Polygon2D* p, Polygon2D** res_p){
             //Rebuild matrix for face i only
             //new_faces = p.faces[edge_indices, i]
             GrB_Matrix_resize(new_faces, nrows_new_edges, 1);
-            GrB_Vector_setElement(justone, 0, i);
-            GrB_extract(new_faces, GrB_NULL, GrB_NULL, *(p->faces), edge_indices, justone, GrB_NULL);
-        
+            GrB_Vector_setElement(justone, i, 0);
+            infogrb = GrB_extract(new_faces, GrB_NULL, GrB_NULL, *(p->faces), edge_indices, justone, GrB_NULL);
 
             //new_status_edge = zeros(nrows_new_edges)
             //if(new_status_edge->size <= nrows_new_edges){
@@ -693,14 +685,14 @@ Polygon2D* extract_ith_face2D(const Polygon2D *p, uint64_t extr_index){
     GrB_Index ncols_faces, ncols_edges;
     GrB_Index nrows_faces, nrows_edges;
     GrB_Index length_edge_ind;
-    GrB_Index i, j, e_i;
+    GrB_Index i, e_i;
     unsigned long int indpt1, indpt2;
     GrB_Index *I_;
     GrB_Index *edge_indices;
     uint8_t *nm;
     Vector_uint *pts_kept_inds;
-    bool found;
     Polygon2D* res_p;
+    GrB_Info infogrb;
 
     GrB_Matrix_ncols(&ncols_faces, *(p->faces));
     if (extr_index>=ncols_faces){
@@ -717,17 +709,15 @@ Polygon2D* extract_ith_face2D(const Polygon2D *p, uint64_t extr_index){
     new_edges = (GrB_Matrix*)malloc(sizeof(GrB_Matrix));
     
     //First, extract new face.
-    I_ = (GrB_Index*)malloc((nrows_faces>nrows_edges ? nrows_faces : nrows_edges)*sizeof(GrB_Index));
-    for (i=0; i<nrows_faces; i++){
-        I_[i] = i;
-    }
     GrB_Matrix_new(intermediate_faces, GrB_INT8, nrows_faces, 1);
-    GrB_Matrix_extract(*intermediate_faces, GrB_NULL, GrB_NULL, *(p->faces), I_, nrows_faces, (GrB_Index[]){extr_index}, 1, GrB_NULL);
+    //GrB_Matrix_extract(*intermediate_faces, GrB_NULL, GrB_NULL, *(p->faces), I_, nrows_faces, (GrB_Index[]){extr_index}, 1, GrB_NULL);
+    GrB_Matrix_extract(*intermediate_faces, GrB_NULL, GrB_NULL, *(p->faces), GrB_ALL, 1, (GrB_Index[]){extr_index}, 1, GrB_NULL);
 
     //Second, take all edge indices in the extracted face.
     GrB_Matrix_nvals(&length_edge_ind, *intermediate_faces);
     edge_indices = (GrB_Index*) calloc(length_edge_ind, sizeof(GrB_Index));
     nm = (uint8_t*) malloc(length_edge_ind*sizeof(uint8_t));
+    I_ = (GrB_Index*)malloc(length_edge_ind*sizeof(GrB_Index));
     GrB_Matrix_extractTuples(edge_indices, I_, nm, &length_edge_ind, *intermediate_faces);
 
     //Third, build a unique list of indices of points involved in kept edges
@@ -742,44 +732,25 @@ Polygon2D* extract_ith_face2D(const Polygon2D *p, uint64_t extr_index){
         GrB_Vector_extractElement(&indpt1, pt_indices, 0);
         GrB_Vector_extractElement(&indpt2, pt_indices, 1);
 
-        found = false;
-        for(j=0;j<pts_kept_inds->size; j++){
-            if (indpt1 == *get_ith_elem_vec_uint(pts_kept_inds, j)){
-                found = true;
-                break;
-            }
-        }
-        if (!found){
-            push_back_vec_uint(pts_kept_inds, &indpt1);
-        }
-
-        found = false;
-        for(j=0;j<pts_kept_inds->size; j++){
-            if (indpt2 == *get_ith_elem_vec_uint(pts_kept_inds, j)){
-                found = true;
-                break;
-            }
-        }
-        if (!found){
-            push_back_vec_uint(pts_kept_inds, &indpt2);
-        }
+        push_back_unique_vec_uint(pts_kept_inds, &indpt1);
+        push_back_unique_vec_uint(pts_kept_inds, &indpt2);
     }
 
     //Build the new list of vertices
     new_vertices = alloc_with_capacity_vec_pts2D(pts_kept_inds->size);
     for (i=0; i<pts_kept_inds->size; i++){
         indpt1 = *get_ith_elem_vec_uint(pts_kept_inds, i);
-        set_ith_elem_vec_pts2D(new_vertices, i, get_ith_elem_vec_pts2D(p->vertices, indpt1));
+        push_back_vec_pts2D(new_vertices, get_ith_elem_vec_pts2D(p->vertices, indpt1));
     }
     //Build the new list of status of each edge
     new_status_edge = alloc_with_capacity_vec_int(length_edge_ind);
-    for (i=0; i<pts_kept_inds->size; i++){
+    for (i=0; i<length_edge_ind; i++){
         indpt1 = edge_indices[i];
-        set_ith_elem_vec_int(new_status_edge, i, get_ith_elem_vec_int(p->status_edge, indpt1));
+        push_back_vec_int(new_status_edge, get_ith_elem_vec_int(p->status_edge, indpt1));
     }
 
     new_phase_face = alloc_with_capacity_vec_int(1);
-    set_ith_elem_vec_int(new_phase_face, 0, get_ith_elem_vec_int(p->phase_face, extr_index));
+    push_back_vec_int(new_phase_face, get_ith_elem_vec_int(p->phase_face, extr_index));
 
     //Build the new array describing the edges
     GrB_Matrix_new(new_edges, GrB_INT8, pts_kept_inds->size, length_edge_ind);
@@ -787,7 +758,7 @@ Polygon2D* extract_ith_face2D(const Polygon2D *p, uint64_t extr_index){
 
     //Re-extract new_faces in order to get rid of un-necessary zeros
     GrB_Matrix_new(new_faces, GrB_INT8, length_edge_ind, 1);
-    GrB_Matrix_extract(*new_faces, GrB_NULL, GrB_NULL, *intermediate_faces, edge_indices, length_edge_ind, (GrB_Index[]){extr_index}, 1, GrB_NULL);
+    infogrb = GrB_Matrix_extract(*new_faces, GrB_NULL, GrB_NULL, *intermediate_faces, edge_indices, length_edge_ind, (GrB_Index[]){0}, 1, GrB_NULL);
   
     res_p = new_Polygon2D_vefsp(new_vertices, new_edges, new_faces, new_status_edge, new_phase_face);
 

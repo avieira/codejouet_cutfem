@@ -13,6 +13,7 @@ program main
   integer, dimension(:), allocatable :: ITAB
   my_real, dimension(:,:), allocatable :: X
   my_real, dimension(:), allocatable :: xp, yp
+  integer(kind=8), dimension(:), allocatable :: limits_polygon
   TYPE(t_ale_connectivity) :: ALE_CONNECT
   type(grid2D_struct_multicutcell), dimension(:, :), allocatable :: grid
   my_real :: threshold, dt, gamma
@@ -21,14 +22,26 @@ program main
   my_real, dimension(:,:), allocatable :: velz
   my_real, dimension(:,:), allocatable :: rho
   my_real, dimension(:,:), allocatable :: p
-  integer :: i
+  integer :: i, nb_points_polygon, nb_polygons
 
+  !N2D = 1
+  !NUMELQ = 4
+  !NUMELTG = 0
+  !NUMNOD = 9
   N2D = 1
-  NUMELQ = 4
+  NUMELQ = 8
   NUMELTG = 0
-  NUMNOD = 9
-
-  call launch_grb()
+  NUMNOD = 15
+  !nb_points_polygon = 4
+  !nb_polygons = 1
+  !nb_points_polygon = 10
+  !nb_polygons = 1
+  !nb_points_polygon = 8
+  !nb_polygons = 2;
+  !nb_points_polygon = 9
+  !nb_polygons = 2;
+  nb_points_polygon = 9
+  nb_polygons = 1
 
   allocate(IXQ(6,NUMELQ))
   allocate(IXTG(5,NUMELTG))
@@ -40,45 +53,96 @@ program main
   allocate(velz(NUMELQ, 2))
   allocate(rho(NUMELQ, 2))
   allocate(p(NUMELQ, 2))
-  allocate(xp(4))
-  allocate(yp(4))
+  allocate(xp(nb_points_polygon))
+  allocate(yp(nb_points_polygon))
+  allocate(limits_polygon(nb_polygons+1))
 
   threshold = 0.5
   dt = 1e-0
   gamma = 1.4
   sign = 1
 
+  !! Grid definition !!
+  !X(:, 1) = (/0., 0., 0./)
+  !X(:, 2) = (/0., 1., 0./)
+  !X(:, 3) = (/0., 2., 0./)
+  !X(:, 4) = (/0., 0., 1./)
+  !X(:, 5) = (/0., 1., 1./)
+  !X(:, 6) = (/0., 2., 1./)
+  !X(:, 7) = (/0., 0., 2./)
+  !X(:, 8) = (/0., 1., 2./)
+  !X(:, 9) = (/0., 2., 2./)
+
+  !IXQ(2:5, 1) = (/1, 2, 5, 4/)
+  !IXQ(2:5, 2) = (/2, 3, 6, 5/)
+  !IXQ(2:5, 3) = (/4, 5, 8, 7/)
+  !IXQ(2:5, 4) = (/5, 6, 9, 8/)
+
+  !ALE_CONNECT%ee_connect%iad_connect = (/1, 5, 9, 13, 17/)
+  !ALE_CONNECT%ee_connect%connected(1:4) = (/-1, 2, 3, -1/)
+  !ALE_CONNECT%ee_connect%connected(5:8) = (/-1, -1, 4, 1/)
+  !ALE_CONNECT%ee_connect%connected(9:12) = (/1, 4, -1, -1/)
+  !ALE_CONNECT%ee_connect%connected(13:16) = (/2, -1, -1, 3/)
+
+  !xp(:) = (/0.5, 1.5, 1.5, 0.5/)
+  !yp(:) = (/0.5, 0.5, 1.5, 1.5/)
+
   X(:, 1) = (/0., 0., 0./)
   X(:, 2) = (/0., 1., 0./)
   X(:, 3) = (/0., 2., 0./)
-  X(:, 4) = (/0., 0., 1./)
-  X(:, 5) = (/0., 1., 1./)
-  X(:, 6) = (/0., 2., 1./)
-  X(:, 7) = (/0., 0., 2./)
-  X(:, 8) = (/0., 1., 2./)
-  X(:, 9) = (/0., 2., 2./)
+  X(:, 4) = (/0., 3., 0./)
+  X(:, 5) = (/0., 4., 0./)
+  X(:, 6) = (/0., 0., 1./)
+  X(:, 7) = (/0., 1., 1./)
+  X(:, 8) = (/0., 2., 1./)
+  X(:, 9) = (/0., 3., 1./)
+  X(:,10) = (/0., 4., 1./)
+  X(:,11) = (/0., 0., 2./)
+  X(:,12) = (/0., 1., 2./)
+  X(:,13) = (/0., 2., 2./)
+  X(:,14) = (/0., 3., 2./)
+  X(:,15) = (/0., 4., 2./)
 
-  IXQ(2:5, 1) = (/1, 2, 5, 4/)
-  IXQ(2:5, 2) = (/2, 3, 6, 5/)
-  IXQ(2:5, 3) = (/4, 5, 8, 7/)
-  IXQ(2:5, 4) = (/5, 6, 9, 8/)
+  IXQ(2:5, 1) = (/1,  2,  7,  6/)
+  IXQ(2:5, 2) = (/2,  3,  8,  7/)
+  IXQ(2:5, 3) = (/3,  4,  9,  8/)
+  IXQ(2:5, 4) = (/4,  5, 10,  9/)
+  IXQ(2:5, 5) = (/6,  7, 12, 11/)
+  IXQ(2:5, 6) = (/7,  8, 13, 12/)
+  IXQ(2:5, 7) = (/8,  9, 14, 13/)
+  IXQ(2:5, 8) = (/9, 10, 15, 14/)
 
-  ALE_CONNECT%ee_connect%iad_connect = (/1, 5, 9, 13, 17/)
-  ALE_CONNECT%ee_connect%connected(1:4) = (/-1, 2, 3, -1/)
-  ALE_CONNECT%ee_connect%connected(5:8) = (/-1, -1, 4, 1/)
-  ALE_CONNECT%ee_connect%connected(9:12) = (/1, 4, -1, -1/)
-  ALE_CONNECT%ee_connect%connected(13:16) = (/2, -1, -1, 3/)
+  ALE_CONNECT%ee_connect%iad_connect = (/1, 5, 9, 13, 17, 21, 25, 29, 33/)
+  ALE_CONNECT%ee_connect%connected(1:4) = (/-1, 2, 5, -1/)
+  ALE_CONNECT%ee_connect%connected(5:8) = (/-1, 3, 6, 1/)
+  ALE_CONNECT%ee_connect%connected(9:12) = (/-1, 4, 7, 2/)
+  ALE_CONNECT%ee_connect%connected(13:16) = (/-1, -1, 8, 3/)
+  ALE_CONNECT%ee_connect%connected(17:20) = (/1, 6, -1, -1/)
+  ALE_CONNECT%ee_connect%connected(21:24) = (/2, 7, -1, 5/)
+  ALE_CONNECT%ee_connect%connected(25:28) = (/3, 8, -1, 6/)
+  ALE_CONNECT%ee_connect%connected(29:32) = (/4, -1, -1, 7/)
 
-  vely(:, :) = 0
-  velz(:, :) = 0
+  !! Polygon definition : list of points, then limits of points in case of several polygons defined !!
+  !xp(:) = (/0.1, 0.5, 1.5, 2.5, 3.5, 3.9, 3.5, 2.5, 1.5, 0.5/)
+  !yp(:) = (/0.9, 0.5, 0.5, 0.5, 0.5, 1.1, 1.5, 1.5, 1.5, 1.5/)
+  !limits_polygon(:) = (/1, 10/)
+  !xp(:) = (/1.0, 1.9, 1.9, 1.0, 2.1, 2.5, 3.0, 2.5/)
+  !yp(:) = (/0.5, 0.5, 1.5, 1.5, 1.0, 0.5, 1.0, 1.5/)
+  !limits_polygon(:) = (/1, 4, 8/)
+  !xp(:) = (/1.0, 1.9, 1.9, 1.0,  2.1,  2.5,  3.0,  2.1, 2.4/)
+  !yp(:) = (/0.5, 0.5, 1.5, 1.5, 0.75, 0.75, 1.25, 1.25, 1.0/)
+  !limits_polygon(:) = (/1, 4, 9/)
+  xp(:) = (/1.0, 1.2, 2.8, 3.0, 2.8, 2.5, 2.0, 1.5, 1.2/)
+  yp(:) = (/1.0, 0.5, 0.5, 1.0, 1.5, 0.6, 1.0, 0.6, 1.5/)
+  limits_polygon(:) = (/1, nb_points_polygon/)
+
+  vely(:, :) = 0.
+  velz(:, :) = 0.
   p(:, :) = 1
   rho(:, :) = 1
 
-  xp(:) = (/0.5, 1.5, 1.5, 0.5/)
-  yp(:) = (/0.5, 0.5, 1.5, 1.5/)
-
   call initialize_solver(N2D, NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, ITAB, ALE_CONNECT, &
-                              grid, xp, yp)
+                              grid, xp, yp, limits_polygon)
 
   call update_fluid(N2D, NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, ITAB, ALE_CONNECT, &
                           grid, vely, velz, rho, p, gamma, dt, threshold, sign)

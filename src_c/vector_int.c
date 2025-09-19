@@ -103,16 +103,21 @@ void print_vec_int8(const Vector_int8* v){
     int8_t* vi;
 
     printf("v = [");
-    for (i = 0; i<v->size-1; i++){
-        vi = get_ith_elem_vec_int8(v, i);
-        printf("%ld, ", *vi);
+    if(v->size>0){
+        for (i = 0; i<v->size-1; i++){
+            vi = get_ith_elem_vec_int8(v, i);
+            printf("%d, ", *vi);
+        }
+        vi = get_ith_elem_vec_int8(v, v->size-1);
+        printf("%d]\n", *vi);
+    } else {
+        printf("]\n");
     }
-    vi = get_ith_elem_vec_int8(v, v->size-1);
-    printf("%ld]\n", *vi);
 }
 
 Vector_int8* cat_vec_int8(const Vector_int8* v1, const Vector_int8* v2){
     Vector_int8 *catv = alloc_with_capacity_vec_int8(v1->size + v2->size);
+    catv->size = v1->size + v2->size;
     memcpy(catv->data, v1->data, v1->size*sizeof(int8_t));
     memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(int8_t));
     return catv;
@@ -218,16 +223,21 @@ void print_vec_int(const Vector_int* v){
     long int* vi;
 
     printf("v = [");
-    for (i = 0; i<v->size-1; i++){
-        vi = get_ith_elem_vec_int(v, i);
-        printf("%ld, ", *vi);
+    if(v->size>0){
+        for (i = 0; i<v->size-1; i++){
+            vi = get_ith_elem_vec_int(v, i);
+            printf("%ld, ", *vi);
+        }
+        vi = get_ith_elem_vec_int(v, v->size-1);
+        printf("%ld]\n", *vi);
+    } else {
+        printf("]\n");
     }
-    vi = get_ith_elem_vec_int(v, v->size-1);
-    printf("%ld]\n", *vi);
 }
 
 Vector_int* cat_vec_int(const Vector_int* v1, const Vector_int* v2){
     Vector_int *catv = alloc_with_capacity_vec_int(v1->size + v2->size);
+    catv->size = v1->size + v2->size;
     memcpy(catv->data, v1->data, v1->size*sizeof(long int));
     memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(long int));
     return catv;
@@ -362,16 +372,21 @@ void print_vec_uint(const Vector_uint* v){
     uint64_t* vi;
 
     printf("v = [");
-    for (i = 0; i<v->size-1; i++){
-        vi = get_ith_elem_vec_uint(v, i);
-        printf("%ld, ", *vi);
+    if(v->size>0){
+        for (i = 0; i<v->size-1; i++){
+            vi = get_ith_elem_vec_uint(v, i);
+            printf("%ld, ", *vi);
+        }
+        vi = get_ith_elem_vec_uint(v, v->size-1);
+        printf("%ld]\n", *vi);
+    } else {
+        printf("]\n");
     }
-    vi = get_ith_elem_vec_uint(v, v->size-1);
-    printf("%ld]\n", *vi);
 }
 
 Vector_uint* cat_vec_uint(const Vector_uint* v1, const Vector_uint* v2){
     Vector_uint *catv = alloc_with_capacity_vec_uint(v1->size + v2->size);
+    catv->size = v1->size + v2->size;
     memcpy(catv->data, v1->data, v1->size*sizeof(unsigned long int));
     memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(unsigned long int));
     return catv;
@@ -534,12 +549,16 @@ void print_vec_int64(const Vector_int64* v){
     int64_t* vi;
 
     printf("v = [");
-    for (i = 0; i<v->size-1; i++){
-        vi = get_ith_elem_vec_int64(v, i);
-        printf("%ld, ", *vi);
+    if(v->size>0){
+        for (i = 0; i<v->size-1; i++){
+            vi = get_ith_elem_vec_int64(v, i);
+            printf("%ld, ", *vi);
+        }
+        vi = get_ith_elem_vec_int64(v, v->size-1);
+        printf("%ld]\n", *vi);
+    } else {
+        printf("]\n");
     }
-    vi = get_ith_elem_vec_int64(v, v->size-1);
-    printf("%ld]\n", *vi);
 }
 
 static int compare_int64( const void* a, const void* b)
@@ -556,6 +575,7 @@ void sort_vec_int64(Vector_int64* v){
 
 Vector_int64* cat_vec_int64(const Vector_int64* v1, const Vector_int64* v2){
     Vector_int64 *catv = alloc_with_capacity_vec_int64(v1->size + v2->size);
+    catv->size = v1->size + v2->size;
     memcpy(catv->data, v1->data, v1->size*sizeof(int64_t));
     memcpy(catv->data+v1->size, v2->data, v2->size*sizeof(int64_t));
     return catv;

@@ -318,7 +318,8 @@ module multicutcell_solver_mod
         end do
 
         do i = 1,nb_cell
-            final_target_cells(i, k) = integer_LL_pop(target_cells(i, k)%ptr)
+            !final_target_cells(i, k) = integer_LL_pop(target_cells(i, k)%ptr)
+            final_target_cells(i, k) = target_cells(i, k)%ptr%val
         end do
 
         do i = 1,nb_cell
@@ -619,7 +620,7 @@ module multicutcell_solver_mod
       is_inside = .true.
 
       do j = 1,nb_cell
-        if (any(grid(i, :)%is_narrowband)) then
+        if (any(grid(j, :)%is_narrowband)) then
           call compute_normals(NUMELQ, NUMELTG, IXQ, IXTG, X, j, normals, nb_normals)
 
           is_inside = .true.
@@ -694,6 +695,7 @@ module multicutcell_solver_mod
         velzR = velz(i, 2)
         pR = p(i, 2)
 
+        !write(*,*), "k = ", k, ", normalVecy = ", normalVecy(k), ", normalVecz = ", normalVecz(k)
         call solve_riemann_problem(gamma, rhoL, rhoR, velyL, velyR, velzL, velzR, pL, pR, 2, &
                                     normalVecy(k), normalVecz(k), &
                                     us, vsL, vsR, ps)
@@ -704,6 +706,9 @@ module multicutcell_solver_mod
                                   normalVecEdgey(eR), normalVecEdgez(eR), uREdge, vREdgeL, vREdgeR, pEdgeR)
         pressure_edge(eL) = pEdgeL 
         pressure_edge(eR) = pEdgeR 
+      
+        !write(*,*), "k = ", k, ", velyL = ", velyL, ", velzL = ", velzL, ", velyR = ", velyR, ", velzR = ", velzR
+        !write(*,*), ", us = ", us, ", vsL+vsR = ", vsL+vsR
       
         vec_move_clippedy(k) = us * normalVecy(k) - 0.5 * (vsL + vsR) * normalVecz(k) !Choice of the mean of left and right tangential velocities, another choice could be made!
         vec_move_clippedz(k) = us * normalVecz(k) + 0.5 * (vsL + vsR) * normalVecy(k) !Choice of the mean of left and right tangential velocities, another choice could be made!
@@ -776,9 +781,12 @@ module multicutcell_solver_mod
     dx = sqrt(minval(grid(:, 1)%area))
     nb_cell = NUMELQ+NUMELTG !size(vely, 1)
     nb_regions = size(vely, 2)
-    minimal_length = 0.5*dx
-    maximal_length = dx
-    minimal_angle = ATAN(1.d0) !pi/4
+    !minimal_length = 0.5*dx
+    !maximal_length = dx
+    !minimal_angle = ATAN(1.d0) !pi/4
+    minimal_length = -1
+    maximal_length = 10000000
+    minimal_angle = -1
   
     call nb_pts_clipped_fortran(nb_pts_clipped)
     call nb_edge_clipped_fortran(nb_edge_clipped)
@@ -820,6 +828,10 @@ module multicutcell_solver_mod
                                 vec_move_clippedy, vec_move_clippedz, pressure_edge)
   
     call smooth_vel_clipped_fortran(vec_move_clippedy, vec_move_clippedz, min_pos_Se, dt)
+    !!Modification for debugging!!
+    !vec_move_clippedy(:) = 0
+    !vec_move_clippedz(:) = 0
+    !vec_move_clippedz(6:8) = -0.2
     call update_clipped_fortran(vec_move_clippedy, vec_move_clippedz, dt, minimal_length, maximal_length, minimal_angle)
   
     call nb_pts_clipped_fortran(nb_pts)
@@ -916,7 +928,7 @@ module multicutcell_solver_mod
 
   !(y_polygon, z_polygon) are the coordinates of successive points forming the polygonal interface.
   subroutine initialize_solver(N2D, NUMELQ, NUMELTG, NUMNOD, IXQ, IXTG, X, ITAB, ALE_CONNECT, &
-                              grid, y_polygon, z_polygon)
+                              grid, y_polygon, z_polygon, limits_polygon)
     use grid2D_struct_multicutcell_mod
     use ALE_CONNECTIVITY_MOD
 
@@ -928,6 +940,8 @@ module multicutcell_solver_mod
     TYPE(t_ale_connectivity), INTENT(IN) :: ALE_CONNECT
     type(grid2D_struct_multicutcell), dimension(:, :), allocatable :: grid
     my_real, dimension(:) :: y_polygon, z_polygon
+    integer(kind=8), dimension(:) :: limits_polygon
+    integer(kind=8) :: nb_polygons
 
     !DUMMY ARGUMENTS
     integer nb_cell, nb_regions, nb_pts_poly
@@ -944,6 +958,7 @@ module multicutcell_solver_mod
     nb_cell = NUMELQ+NUMELTG !size(vely, 1)
     nb_regions = 2
     nb_pts_poly = size(y_polygon)
+    nb_polygons = size(limits_polygon) - 1
     allocate(grid(nb_cell, nb_regions))
 
     call launch_grb() !C call
@@ -953,7 +968,7 @@ module multicutcell_solver_mod
       end do
     end do
 
-    call build_clipped_from_pts_fortran(y_polygon, z_polygon, nb_pts_poly)
+    call build_clipped_from_pts_fortran(y_polygon, z_polygon, limits_polygon, nb_polygons)
     
     allocate(vec_move_clippedy(nb_pts_poly))
     allocate(vec_move_clippedz(nb_pts_poly))

@@ -123,6 +123,7 @@ void print_vec_pt2D(const Vector_points2D p){
 
 Vector_points2D* cat_vec_pts2D(const Vector_points2D* v1, const Vector_points2D* v2){
     Vector_points2D *catv = alloc_with_capacity_vec_pts2D(v1->size + v2->size);
+    catv->size = v1->size + v2->size;
     memcpy(catv->points, v1->points, v1->size*sizeof(Point2D));
     memcpy(catv->points+v1->size, v2->points, v2->size*sizeof(Point2D));
     return catv;
@@ -244,6 +245,7 @@ void print_vec_pt3D(const Vector_points3D p){
 
 Vector_points3D* cat_vec_pts3D(const Vector_points3D* v1, const Vector_points3D* v2){
     Vector_points3D *catv = alloc_with_capacity_vec_pts3D(v1->size + v2->size);
+    catv->size = v1->size + v2->size;
     memcpy(catv->points, v1->points, v1->size*sizeof(Point3D));
     memcpy(catv->points+v1->size, v2->points, v2->size*sizeof(Point3D));
     return catv;
@@ -367,6 +369,7 @@ void print_vec_pt4D(const Vector_points4D p){
 
 Vector_points4D* cat_vec_pts4D(const Vector_points4D* v1, const Vector_points4D* v2){
     Vector_points4D *catv = alloc_with_capacity_vec_pts4D(v1->size + v2->size);
+    catv->size = v1->size + v2->size;
     memcpy(catv->points, v1->points, v1->size*sizeof(Point4D));
     memcpy(catv->points+v1->size, v2->points, v2->size*sizeof(Point4D));
     return catv;

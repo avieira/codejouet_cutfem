@@ -336,14 +336,15 @@ static void split_edge(Polygon2D* p, uint64_t i_e, const Point2D *new_pt){
     GrB_Index i_e0_pt0, i_e0_pt1;
     uint64_t ind_new_pt;
     int8_t val;
-    GrB_Matrix new_line, new_edge;
-    GrB_Index nb_faces;
+    GrB_Matrix new_line, new_edge, copy_mat;
+    GrB_Index nb_faces, nb_cols, nb_rows;
 
     GrB_Matrix_ncols(&nb_edge, *(p->edges));
     GrB_Matrix_ncols(&nb_faces, *(p->faces));
-    infogrb = GrB_Vector_new(&ej, GrB_INT8, 2);
-    infogrb = GrB_Vector_new(&extr_vals_ej, GrB_INT8, 2);
-    infogrb = GrB_Vector_new(&inds_pts_edge, GrB_UINT64, 2);
+    infogrb = GrB_Vector_new(&ej, GrB_INT8, p->vertices->size);
+    infogrb = GrB_Vector_new(&extr_vals_ej, GrB_INT8, p->vertices->size);
+    infogrb = GrB_Vector_new(&inds_pts_edge, GrB_UINT64, p->vertices->size);
+    infogrb = GrB_Matrix_new(&copy_mat, GrB_INT8, 1, 1);
 
     //Extract the column i_e of p.edges, and take the two first non-zero values.
     infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, i_e, GrB_NULL);
@@ -364,14 +365,26 @@ static void split_edge(Polygon2D* p, uint64_t i_e, const Point2D *new_pt){
     infogrb = GrB_Matrix_new(&new_edge, GrB_INT8, ind_new_pt, 1);
     infogrb = GrB_Matrix_setElement(new_line, val, 0, i_e);
     infogrb = GrB_Matrix_setElement(new_edge, val, i_e0_pt0, 0);
-    infogrb = GrB_Matrix_setElement(new_edge, -val, ind_new_pt, 0);
+    infogrb = GrB_Matrix_setElement(new_edge, -val, ind_new_pt-1, 0);
     
-    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){*(p->edges), new_line}, 2, 1, GrB_NULL); //edges = [edges ; new_line]
-    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){*(p->edges), new_edge}, 1, 2, GrB_NULL); //edges = [edges   new_edge]
+    GrB_Matrix_dup(&copy_mat, *(p->edges));
+    GrB_Matrix_ncols(&nb_cols, copy_mat);
+    GrB_Matrix_nrows(&nb_rows, copy_mat);
+    infogrb = GrB_Matrix_resize(*(p->edges), nb_rows + 1, nb_cols);
+    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){copy_mat, new_line}, 2, 1, GrB_NULL); //edges = [edges ; new_line]
+    GrB_Matrix_dup(&copy_mat, *(p->edges));
+    GrB_Matrix_ncols(&nb_cols, copy_mat);
+    GrB_Matrix_nrows(&nb_rows, copy_mat);
+    infogrb = GrB_Matrix_resize(*(p->edges), nb_rows, nb_cols + 1);
+    infogrb = GxB_Matrix_concat(*(p->edges), (GrB_Matrix[]){copy_mat, new_edge}, 1, 2, GrB_NULL); //edges = [edges   new_edge]
 
     infogrb = GrB_Matrix_resize(new_line, 1, nb_faces);
     infogrb = GrB_extract(new_line, GrB_NULL, GrB_NULL, *(p->faces), (GrB_Index[]){i_e}, 1, GrB_ALL, 1,GrB_NULL); 
-    infogrb = GxB_Matrix_concat(*(p->faces), (GrB_Matrix[]){*(p->faces), new_line}, 2, 1, GrB_NULL); //faces = [faces ; faces[i_e,:]]
+    GrB_Matrix_dup(&copy_mat, *(p->faces));
+    GrB_Matrix_ncols(&nb_cols, copy_mat);
+    GrB_Matrix_nrows(&nb_rows, copy_mat);
+    infogrb = GrB_Matrix_resize(*(p->faces), nb_rows + 1, nb_cols);
+    infogrb = GxB_Matrix_concat(*(p->faces), (GrB_Matrix[]){copy_mat, new_line}, 2, 1, GrB_NULL); //faces = [faces ; faces[i_e,:]]
 
     //push!(p.pressure_edge, p.pressure_edge[i_e]) //TODO Report this
     //push!(p.status_edge, p.status_edge[i_e]) //TODO Report this
@@ -382,6 +395,7 @@ static void split_edge(Polygon2D* p, uint64_t i_e, const Point2D *new_pt){
     GrB_Vector_free(&inds_pts_edge);
     GrB_Matrix_free(&new_line);
     GrB_Matrix_free(&new_edge);
+    GrB_free(&copy_mat);
 }
 
 //The common point of edges ind_e0_fused and ind_e1_fused (both in face ind_face) is suppressed, and the edges are transformed to become only one.
@@ -459,20 +473,24 @@ static void backpropagate_pts(Polygon2D *pn, Vector_points2D* vertices_tnp1,\
     Point2D new_pt;
     int8_t mark8 = -2;
     const Point2D *ptp, *ptn;
+    GrB_Info infogrb;
 
-    GrB_Matrix_nrows(&nb_pts, *(pn->edges));
-    GrB_Vector_new(&ej, GrB_INT8, nb_pts);
-    GrB_Vector_new(&ipts, GrB_UINT64, nb_pts);
-    GrB_Vector_new(&extr_vals_ej, GrB_INT8, nb_pts);
+    GrB_Vector_new(&ej, GrB_INT8, 0);
+    GrB_Vector_new(&ipts, GrB_UINT64, 0);
+    GrB_Vector_new(&extr_vals_ej, GrB_INT8, 0);
 
     for(i=0; i<edge_intersect1->size; i++){
         //ind_pts = rowvals(pn.edges)
         //ipts = ind_pts[nzrange(pn.edges, ie)]
+        GrB_Matrix_nrows(&nb_pts, *(pn->edges));
+        GrB_Vector_resize(ej, nb_pts);
+        GrB_Vector_resize(ipts, nb_pts);
+        GrB_Vector_resize(extr_vals_ej, nb_pts);
         ie = *get_ith_elem_vec_uint(edge_intersect1, i);
-        GrB_extract(ej, GrB_NULL, GrB_NULL, *(pn->edges), GrB_ALL, 1, ie, GrB_NULL); 
-        GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
-        GrB_Vector_extractElement(&ipts1, ipts, 0);
-        GrB_Vector_extractElement(&ipts2, ipts, 1);
+        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(pn->edges), GrB_ALL, 1, ie, GrB_NULL); 
+        infogrb = GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+        infogrb = GrB_Vector_extractElement(&ipts1, ipts, 0);
+        infogrb = GrB_Vector_extractElement(&ipts2, ipts, 1);
         if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) > 0){
             iptp = ipts1;
             iptn = ipts2;
@@ -494,11 +512,15 @@ static void backpropagate_pts(Polygon2D *pn, Vector_points2D* vertices_tnp1,\
         push_back_vec_pts2D(vertices_tnp1, get_ith_elem_vec_pts2D(pts_intersec, i));
         push_back_vec_int8(pt_in_or_out, &mark8);
 
+        GrB_Matrix_nrows(&nb_pts, *(pn->edges));
+        GrB_Vector_resize(ej, nb_pts);
+        GrB_Vector_resize(ipts, nb_pts);
+        GrB_Vector_resize(extr_vals_ej, nb_pts);
         ie = *get_ith_elem_vec_uint(edge_intersect2, i);
-        GrB_extract(ej, GrB_NULL, GrB_NULL, *(pn->edges), GrB_ALL, 1, ie, GrB_NULL); 
-        GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
-        GrB_Vector_extractElement(&ipts1, ipts, 0);
-        GrB_Vector_extractElement(&ipts2, ipts, 1);
+        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(pn->edges), GrB_ALL, 1, ie, GrB_NULL); 
+        infogrb = GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+        infogrb = GrB_Vector_extractElement(&ipts1, ipts, 0);
+        infogrb = GrB_Vector_extractElement(&ipts2, ipts, 1);
         if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) > 0){
             iptp = ipts1;
             iptn = ipts2;
@@ -593,6 +615,7 @@ static void find_pair_intersection(const Polygon2D* p, \
     GrB_Vector ej, ipts, extr_vals_ej;
     Vector_uint *listEdges = alloc_empty_vec_uint();
     Vector_uint *listNodes = alloc_empty_vec_uint();
+    GrB_Info infogrb;
 
     GrB_Matrix_nrows(&nb_pts, *(p->edges));
     GrB_Vector_new(&ej, GrB_INT8, nb_pts);
@@ -614,10 +637,10 @@ static void find_pair_intersection(const Polygon2D* p, \
         //First edge of first intersection
         ie1 = *get_ith_elem_vec_uint(edge_intersect1, ie);
         //krange = ind_pts[nzrange(p.edges, ie1)]
-        GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ie1, GrB_NULL); 
-        GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
-        GrB_Vector_extractElement(&ipts1, ipts, 0);
-        GrB_Vector_extractElement(&ipts2, ipts, 1);
+        infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ie1, GrB_NULL); 
+        infogrb = GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+        infogrb = GrB_Vector_extractElement(&ipts1, ipts, 0);
+        infogrb = GrB_Vector_extractElement(&ipts2, ipts, 1);
 
         if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
             i = ipts1;
@@ -627,13 +650,13 @@ static void find_pair_intersection(const Polygon2D* p, \
             i = UINT64_MAX;
         }
         if (i < UINT64_MAX){
-            for (je = ie+1; j<nb_intersec; je++){
+            for (je = ie + 1; je<nb_intersec; je++){
                 //First edge of second intersection
                 je1 = *get_ith_elem_vec_uint(edge_intersect1, je);
-                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
-                GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
-                GrB_Vector_extractElement(&ipts1, ipts, 0);
-                GrB_Vector_extractElement(&ipts2, ipts, 1);
+                infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
+                infogrb = GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+                infogrb = GrB_Vector_extractElement(&ipts1, ipts, 0);
+                infogrb = GrB_Vector_extractElement(&ipts2, ipts, 1);
 
                 if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
                     j = ipts1;
@@ -655,10 +678,10 @@ static void find_pair_intersection(const Polygon2D* p, \
 
                 //Second edge of second intersection
                 je1 = *get_ith_elem_vec_uint(edge_intersect2, je);
-                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
-                GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
-                GrB_Vector_extractElement(&ipts1, ipts, 0);
-                GrB_Vector_extractElement(&ipts2, ipts, 1);
+                infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
+                infogrb = GxB_Vector_extractTuples_Vector(ipts, extr_vals_ej, ej, GrB_NULL);
+                infogrb = GrB_Vector_extractElement(&ipts1, ipts, 0);
+                infogrb = GrB_Vector_extractElement(&ipts2, ipts, 1);
 
                 if (*get_ith_elem_vec_int8(pt_in_or_out, ipts1) < 0) {
                     j = ipts1;
@@ -696,7 +719,7 @@ static void find_pair_intersection(const Polygon2D* p, \
             i = UINT64_MAX;
         }
         if (i < UINT64_MAX){
-            for (je = ie+1; j<nb_intersec; je++){
+            for (je = ie+1; je<nb_intersec; je++){
                 //First edge of second intersection
                 je1 = *get_ith_elem_vec_uint(edge_intersect1, je);
                 GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, je1, GrB_NULL); 
@@ -1186,7 +1209,7 @@ static Polyhedron3D* build_space_time_cell_with_intersection(const Polygon2D* fn
             
                 //GrB_Matrix_extractElement(&fne_ptind, *(fn->edges), pt_index1, i);
                 GrB_Vector_extractElement(&in_out_f1, val_nz_ei, 0);
-                if (in_out_f1 > 0){ //pt_index1 should always be the index where the edges starts
+                if (in_out_f1 > 0){ //pt_index1 should always be the index where the edge starts
                     temp = pt_index1;
                     pt_index1 = pt_index2;
                     pt_index2 = temp;
@@ -1238,10 +1261,10 @@ static Polyhedron3D* build_space_time_cell_with_intersection(const Polygon2D* fn
         }
     }
 
-    GrB_Matrix_resize(*new_edges, nb_pts1 + nb_pts2, curr_edge-1);
-    GrB_Matrix_resize(*new_faces, curr_edge-1, curr_face-1);
-    GrB_Matrix_resize(*new_volume, curr_face-1, 1);
-    status_faces->size = curr_face-1;
+    GrB_Matrix_resize(*new_edges, nb_pts1 + nb_pts2, curr_edge);
+    GrB_Matrix_resize(*new_faces, curr_edge, curr_face);
+    GrB_Matrix_resize(*new_volume, curr_face, 1);
+    status_faces->size = curr_face;
     res_p = new_Polyhedron3D_vefvs(new_vertices, new_edges, new_faces, new_volume, status_faces);
 
     GrB_free(&emptyNE);
@@ -1391,6 +1414,7 @@ void update_solid(Polygon2D **solid, Polyhedron3D** solid3D, const my_real* vec_
                             pt_in_or_out_split->data, IntersecList_split, edge_intersect1_split, edge_intersect2_split,\
                             pt_in_or_out_fuse->data, IntersecList_fuse, edge_intersect1_fuse, edge_intersect2_fuse);
         if (IntersecList_split->size > 0){
+            printf("SPLITTING DONE\n");
             find_pair_intersection(solid_tnp1, edge_intersect1_split, edge_intersect2_split, pt_in_or_out_split, &pair_intersection_split);
             break_edges_split_fusion(solid_tnp1, edge_intersect1_split, edge_intersect2_split, pt_in_or_out_split->data, &solid_new);
             polygon_split(solid_new, solid_tnp1->edges,\
@@ -1411,6 +1435,7 @@ void update_solid(Polygon2D **solid, Polyhedron3D** solid3D, const my_real* vec_
             }
         }
         if (IntersecList_fuse->size >0){
+            printf("FUSION DONE\n");
             find_pair_intersection(solid_tnp1, edge_intersect1_fuse, edge_intersect2_fuse, pt_in_or_out_fuse, &pair_intersection_fuse);
             break_edges_split_fusion(solid_new, edge_intersect1_fuse, edge_intersect2_fuse, pt_in_or_out_fuse->data, &solid_new);
             polygons_fusion(solid_new, solid_tnp1->edges, IntersecList_fuse, edge_intersect1_fuse, edge_intersect2_fuse, \
@@ -1436,7 +1461,6 @@ void update_solid(Polygon2D **solid, Polyhedron3D** solid3D, const my_real* vec_
             solid_new->vertices->size = list_del_pts->nrows;
         }
 
-
         //solid and solid_tnp1 will now be modified to be the faces of the polyhedron at tn and tn+dt
         //First: backpropagate the intersection point on the face at tn.
         backpropagate_pts(*solid, vertices_tnp1, IntersecList_split, edge_intersect1_split, edge_intersect2_split, pt_in_or_out_split);
@@ -1459,6 +1483,7 @@ void update_solid(Polygon2D **solid, Polyhedron3D** solid3D, const my_real* vec_
             split_edge(solid_tnp1, edge_intersect1_split->data[i], get_ith_elem_vec_pts2D(IntersecList_split, i));
             split_edge(solid_tnp1, edge_intersect2_split->data[i], get_ith_elem_vec_pts2D(IntersecList_split, i));
         }
+
         for(i=0; i<edge_intersect1_fuse->size; i++){
             split_edge(solid_tnp1, edge_intersect1_fuse->data[i], get_ith_elem_vec_pts2D(IntersecList_fuse,i));
             split_edge(solid_tnp1, edge_intersect2_fuse->data[i], get_ith_elem_vec_pts2D(IntersecList_fuse,i));

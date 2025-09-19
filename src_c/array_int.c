@@ -96,18 +96,22 @@ void print_arr_int(const Array_int* v){
     int64_t* vi;
 
     printf("v = [");
-    for (i = 0; i<v->nrows-1; i++){
-        for (j = 0; j<v->ncols-1; j++){
-            vi = get_ijth_elem_arr_int(v, i, j);
-            printf("%.3e, ", *vi);
+    if(v->nrows>0 && v->ncols>0){
+        for (i = 0; i<v->nrows-1; i++){
+            for (j = 0; j<v->ncols-1; j++){
+                vi = get_ijth_elem_arr_int(v, i, j);
+                printf("%ld, ", *vi);
+            }
+            vi = get_ijth_elem_arr_int(v, i, v->ncols-1);
+            printf("%ld\n", *vi);
         }
-        vi = get_ijth_elem_arr_int(v, i, v->ncols-1);
-        printf("%.3e\n", *vi);
+        for (j = 0; j<v->ncols-1; j++){
+            vi = get_ijth_elem_arr_int(v, v->nrows-1, j);
+            printf("%ld, ", *vi);
+        }
+        vi = get_ijth_elem_arr_int(v, v->nrows-1, v->ncols-1);
+        printf("%ld]\n", *vi);
+    } else {
+        printf("]\n");
     }
-    for (j = 0; j<v->ncols-1; j++){
-        vi = get_ijth_elem_arr_int(v, v->nrows-1, j);
-        printf("%.3e, ", *vi);
-    }
-    vi = get_ijth_elem_arr_int(v, v->nrows-1, v->ncols-1);
-    printf("%.3e]\n", *vi);
 }

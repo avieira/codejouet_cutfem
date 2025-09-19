@@ -127,15 +127,6 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
     my_real pvij;
     Vector_points3D *norm_vec_poly;
 
-    /*
-    printf("clipped vertices");
-    print_vec_pt3D(*(p->vertices));
-    printf("initial_p status_face = ");
-    print_vec_int(initial_p->status_face);
-    printf("grid status_face = ");
-    print_vec_int(grid->status_face);
-    */
-
     GrB_Matrix_ncols(&nb_edge, *(grid->faces)); //actually number of edges + 2 faces at times tn and tn+dt
 
     *lambdas = alloc_with_capacity_vec_pts3D(nb_edge);
@@ -151,11 +142,9 @@ void compute_lambdas2D_time(const Polyhedron3D* grid, const Polyhedron3D *initia
     
         GrB_Matrix_ncols(&nb_cols_vol, *(p->volumes)); 
         GrB_Matrix_ncols(&nb_cols_fac, *(p->faces)); 
-        //printf("nb_cols_face = %ld\n", nb_cols_fac);
         for(i=0; i<nb_cols_fac; i++){
             psfi = get_ith_elem_vec_int(p->status_face, i);
             nvpi = get_ith_elem_vec_pts3D(norm_vec_poly, i);
-            //printf("psfi = %ld, nvpi = (%lf, %lf, %lf)\n", *psfi, nvpi->x, nvpi->y, nvpi->t);
             for (j=0; j<nb_cols_vol; j++){
                 pvij_int = 0; //if volumes[i,j] does not exist, it won't change the value of pvij_int.
                 GrB_Matrix_extractElement(&pvij_int, *(p->volumes), i, j);

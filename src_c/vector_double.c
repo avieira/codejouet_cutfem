@@ -119,7 +119,7 @@ static int compare_reals(const void*a, const void *b){
     if (r1->r < r2->r){
         return -1;
     } else if (r1->r > r2->r) {
-        return -1;
+        return 1;
     } else {
         return 0;
     }

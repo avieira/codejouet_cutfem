@@ -54,10 +54,25 @@ void build_grid_from_points_fortran_(const my_real* x_v, const my_real* y_v, con
 /// @param x_v array of x-coordinates of size signed_nb_pts
 /// @param y_v array of y-coordinates of size signed_nb_pts 
 /// @param signed_nb_pts size of the arrays (and number of points).
-void build_clipped_from_pts_fortran_(const my_real* x_v, const my_real* y_v, const long long int *signed_nb_pts){
-    const unsigned long nb_pts = (unsigned long) *signed_nb_pts;
+void build_clipped_from_pts_fortran_(const my_real* x_v, const my_real* y_v, const long long* limits, const long long *nb_polygons){
+    unsigned long nb_pts;
+    int64_t i;
+    long long limit1, limit2;
+    const my_real *begin_x, *begin_y;
+    Polygon2D* copy_clipped = new_Polygon2D();
     
+    nb_pts = (unsigned long) limits[1];
     clipped = polygon_from_consecutive_points(x_v, y_v, nb_pts);
+    for(i=1; i<(*nb_polygons); i++){
+        limit1 = limits[i];
+        limit2 = limits[i+1]-1;
+        nb_pts = (unsigned long)(limit2-limit1+1);
+        begin_x = x_v + limit1;
+        begin_y = y_v + limit1;
+        copy_Polygon2D(clipped, copy_clipped);
+        dealloc_Polygon2D(clipped); free(clipped);
+        clipped = fuse_polygons(copy_clipped, polygon_from_consecutive_points(begin_x, begin_y, nb_pts));
+    }
 }
 
 void compute_lambdas2d_fortran_(const my_real *dt, \
@@ -106,8 +121,11 @@ void compute_normals_clipped_fortran_(my_real* normalVecx, my_real* normalVecy, 
     GrB_Matrix_nrows(&nb_pts, *(clipped->edges));
     GrB_Matrix_ncols(&nb_edges, *(clipped->edges));
     normals_pts = alloc_with_capacity_vec_pts2D(nb_pts);
+    normals_pts->size = nb_pts;
     normals_edges = alloc_with_capacity_vec_pts2D(nb_edges);
+    normals_edges->size = nb_edges;
     compute_all_normals2D(clipped, normals_pts, normals_edges, min_pos_Se);
+
 
     for(i=0; i<normals_pts->size; i++){
         normalVecx[i] = normals_pts->points[i].x;
@@ -145,8 +163,9 @@ void smooth_vel_clipped_fortran_(my_real* vec_move_clippedx, my_real* vec_move_c
     GrB_free(&id);
 }
 
-void get_clipped_ith_vertex_fortran_(long long *k, Point2D *pt){
-    *pt = *get_ith_elem_vec_pts2D(clipped->vertices, *k); 
+void get_clipped_ith_vertex_fortran_(long long *signed_k, Point2D *pt){
+    uint64_t k = (uint64_t)((*signed_k) - 1);
+    *pt = *get_ith_elem_vec_pts2D(clipped->vertices, k); 
 }
 
 void get_clipped_edges_ith_vertex_fortran_(long long *k_signed, long long *signed_eR, long long *signed_eL){
@@ -156,7 +175,7 @@ void get_clipped_edges_ith_vertex_fortran_(long long *k_signed, long long *signe
     GrB_Index size_nz_e_k;
     GrB_Index nb_pts;
     GrB_Info infogrb;
-    GrB_Index k = (GrB_Index)(*k_signed);
+    GrB_Index k = (GrB_Index)(*k_signed - 1);
 
     nb_pts = clipped->vertices->size;
 

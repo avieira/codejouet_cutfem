@@ -41,6 +41,7 @@ static void list_all_neighbours(uint64_t curr_node, const GrB_Matrix* edges, con
     GrB_Vector ej, nz_ej, extr_vals_ej;
     uint64_t i;
     GrB_Index pot_neigh1, pot_neigh2;
+    GrB_Info infogrb;
 
     //pot_ind_edges = findall(x->x!=0, edges[curr_node, :]);
     GrB_Matrix_ncols(&nb_edges, *edges);
@@ -67,10 +68,10 @@ static void list_all_neighbours(uint64_t curr_node, const GrB_Matrix* edges, con
         if (!is_in_vec_uint(closedList_edges, &i_e)){
             push_back_vec_uint(ind_edges, &i_e);
             //pot_neigh = findall(x->x!=0, edges[:, i_e])
-            GrB_extract(ej, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, i_e, GrB_NULL); 
-            GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
-            GrB_Vector_extractElement(&pot_neigh1, nz_ej, 0);
-            GrB_Vector_extractElement(&pot_neigh2, nz_ej, 1);
+            infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *edges, GrB_ALL, 1, i_e, GrB_NULL); 
+            infogrb = GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
+            infogrb = GrB_Vector_extractElement(&pot_neigh1, nz_ej, 0);
+            infogrb = GrB_Vector_extractElement(&pot_neigh2, nz_ej, 1);
             if (pot_neigh1 == curr_node)
                 push_back_vec_uint(neighbours, &pot_neigh2);
             else
@@ -137,9 +138,9 @@ void astar(const Vector_points2D *vertices, const GrB_Matrix *edges, uint64_t st
                     diffpt = *get_ith_elem_vec_pts2D(vertices, i_n);
                     diffpt.x -= endpt2D.x; 
                     diffpt.y -= endpt2D.y; 
-                    node->heuristic += norm_pt2D(diffpt);
+                    new_node.heuristic += norm_pt2D(diffpt);
                     
-                    add_node_ordset(&openList, node);
+                    add_node_ordset(&openList, &new_node);
 
                     s = (Dict_Int_Treenode*)malloc(sizeof(Dict_Int_Treenode));
                     s->id = i_n;

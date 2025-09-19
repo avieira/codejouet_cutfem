@@ -31,7 +31,7 @@ static int compare_edges(const void *a, const void *b){
     if ((p1.x<p2.x) || ((p1.x==p2.x) && (p1.y<p2.y))){
         return -1;
     } else {
-        return -1;
+        return 1;
     }
 }
 
@@ -137,7 +137,7 @@ void find_all_self_intersection(Polygon2D *p, Vector_points2D* IntersecList, Vec
             list_edges[i] = (Indexed_Edge2D){(Edge2D){*ext2, *ext1}, i};
         }
     }
-    
+
     qsort(list_edges, nb_edges, sizeof(Indexed_Edge2D), compare_edges);
 
     for (i = 0; i<nb_edges-1; i++){
@@ -147,7 +147,7 @@ void find_all_self_intersection(Polygon2D *p, Vector_points2D* IntersecList, Vec
             e2 = list_edges[j].e;
             indpermj = list_edges[j].i;
             //if e2.ext1<e1.ext2 
-            if ((e2.ext1.x < e1.ext1.x) || ((e2.ext1.x == e1.ext1.x) && (e2.ext1.y < e1.ext1.y))){//at least, they have common x-range.
+            if ((e2.ext1.x < e1.ext2.x) || ((e2.ext1.x == e1.ext2.x) && (e2.ext1.y < e1.ext2.y))){//at least, they have common x-range.
                 pt = intersection_edges(e1, e2, false);
                 if (!isnan(pt.x)) {
                     push_back_vec_pts2D(IntersecList, &pt);
@@ -206,7 +206,7 @@ static uint64_t ray_tracing_intersect(const Polygon2D* p, uint64_t pt_index, con
     GrB_Index nb_edges, nb_pts, nvals;
     GrB_Vector i_edges, I_vec_e_k, extr_vals_e_k;
     GrB_Matrix e_k;
-    Point2D *pt, *e1_ext1, *e1_ext2, *e2_ext1, *e2_ext2;
+    Point2D *pt, e1_ext1, e1_ext2, e2_ext1, e2_ext2;
     Point2D normalVector1, normalVector2;
     GrB_Index ie1, ie2;
     GrB_Vector ej, nz_ej, extr_vals_ej;
@@ -243,15 +243,15 @@ static uint64_t ray_tracing_intersect(const Polygon2D* p, uint64_t pt_index, con
     GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
     GrB_Vector_extractElement(&i, nz_ej, 0);
     GrB_Vector_extractElement(&j, nz_ej, 1);
-    e1_ext1 = get_ith_elem_vec_pts2D(p->vertices, i);
-    e1_ext2 = get_ith_elem_vec_pts2D(p->vertices, j);
+    e1_ext1 = *get_ith_elem_vec_pts2D(p->vertices, i);
+    e1_ext2 = *get_ith_elem_vec_pts2D(p->vertices, j);
 
     GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, ie2, GrB_NULL); 
     GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
     GrB_Vector_extractElement(&i, nz_ej, 0);
     GrB_Vector_extractElement(&j, nz_ej, 1);
-    e2_ext1 = get_ith_elem_vec_pts2D(p->vertices, i);
-    e2_ext2 = get_ith_elem_vec_pts2D(p->vertices, j);
+    e2_ext1 = *get_ith_elem_vec_pts2D(p->vertices, i);
+    e2_ext2 = *get_ith_elem_vec_pts2D(p->vertices, j);
 
     GrB_Matrix_extractElement(&sign, *(p->faces), ie1, i_face);
     normalVector1 = *get_ith_elem_vec_pts2D(normal_vectors, ie1);
@@ -262,22 +262,22 @@ static uint64_t ray_tracing_intersect(const Polygon2D* p, uint64_t pt_index, con
     normalVector2 = (Point2D){-sign*(normalVector2.x), -sign*(normalVector2.y)};
 
     if (normalVector1.y * normalVector2.y <= 0) { //y-direction is tangent
-        if ((e1_ext1->x != pt->x) || (e1_ext1->x != pt->x)){
-            tmp_pt = *e1_ext1;
-            *e1_ext1 = *e1_ext2;
-            *e1_ext2 = tmp_pt;
+        if ((e1_ext1.x != pt->x) || (e1_ext1.x != pt->x)){
+            tmp_pt = e1_ext1;
+            e1_ext1 = e1_ext2;
+            e1_ext2 = tmp_pt;
         }
-        if ((e2_ext1->x != pt->x) || (e2_ext1->x != pt->x)) {
-            tmp_pt = *e2_ext1;
-            *e2_ext1 = *e2_ext2;
-            *e2_ext2 = tmp_pt;
+        if ((e2_ext1.x != pt->x) || (e2_ext1.x != pt->x)) {
+            tmp_pt = e2_ext1;
+            e2_ext1 = e2_ext2;
+            e2_ext2 = tmp_pt;
         }
 
         //We must identify the edge on top of the other. The one below is edge1, the one above is edge2.
         swap = false;
-        if ((e1_ext2->x <= pt->x) && (e1_ext2->x <= pt->x)){ //both edges are on the left
+        if ((e1_ext2.x <= pt->x) && (e1_ext2.x <= pt->x)){ //both edges are on the left
             if (normalVector1.x*normalVector2.x <= 0){ //Both edges are in the same quarter
-                if ((e1_ext2->y <= pt->y) && (e1_ext2->y <= pt->y)){ //both edges are on the bottom left quarter
+                if ((e1_ext2.y <= pt->y) && (e1_ext2.y <= pt->y)){ //both edges are on the bottom left quarter
                     if (normalVector1.x * normalVector1.y <= 0)
                         swap = true;
                 } else { //both edges are on the up left quarter
@@ -293,9 +293,9 @@ static uint64_t ray_tracing_intersect(const Polygon2D* p, uint64_t pt_index, con
                         swap = true;
                 }
             }
-        } else if ((e1_ext2->x >= pt->x) && (e1_ext2->x >= pt->x)){ //both edges are on the right
+        } else if ((e1_ext2.x >= pt->x) && (e1_ext2.x >= pt->x)){ //both edges are on the right
             if (normalVector1.x*normalVector2.x <= 0){ //Both edges are in the same quarter
-                if ((e1_ext2->y <= pt->y) && (e1_ext2->y <= pt->y)){ //both edges are on the bottom right quarter
+                if ((e1_ext2.y <= pt->y) && (e1_ext2.y <= pt->y)){ //both edges are on the bottom right quarter
                     if (normalVector1.x * normalVector1.y >= 0)
                         swap = true;
                 } else { //both edges are on the up right quarter
@@ -346,28 +346,28 @@ static uint64_t ray_tracing_intersect(const Polygon2D* p, uint64_t pt_index, con
             GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
             GrB_Vector_extractElement(&k, nz_ej, 0);
             GrB_Vector_extractElement(&j, nz_ej, 1);
-            e1_ext1 = get_ith_elem_vec_pts2D(p->vertices, k);
-            e1_ext2 = get_ith_elem_vec_pts2D(p->vertices, j);
-            if (e1_ext1->x < e1_ext2->x){
-                x_min = e1_ext1->x;
-                x_max = e1_ext2->x;
+            e1_ext1 = *get_ith_elem_vec_pts2D(p->vertices, k);
+            e1_ext2 = *get_ith_elem_vec_pts2D(p->vertices, j);
+            if (e1_ext1.x < e1_ext2.x){
+                x_min = e1_ext1.x;
+                x_max = e1_ext2.x;
             } else {
-                x_max = e1_ext1->x;
-                x_min = e1_ext2->x;
+                x_max = e1_ext1.x;
+                x_min = e1_ext2.x;
             }
-            if (e1_ext1->y < e1_ext2->y){
-                y_min = e1_ext1->y;
-                y_max = e1_ext2->y;
+            if (e1_ext1.y < e1_ext2.y){
+                y_min = e1_ext1.y;
+                y_max = e1_ext2.y;
             } else {
-                y_max = e1_ext1->y;
-                y_min = e1_ext2->y;
+                y_max = e1_ext1.y;
+                y_min = e1_ext2.y;
             }
             if ((x_min <= pt->x) && (pt->x < x_max)) {
                 if (y_min > pt->y){
                     nb_intersect += 1;
                 } else if (y_max > pt->y) {
-                    *e2_ext2 = intersection_edges(ray_edge, (Edge2D){*e1_ext1, *e1_ext2}, true);
-                    if (!isnan(e2_ext2->x)) {
+                    e2_ext2 = intersection_edges(ray_edge, (Edge2D){e1_ext1, e1_ext2}, true);
+                    if (!isnan(e2_ext2.x)) {
                         nb_intersect += 1;
                     }
                 }
@@ -389,28 +389,28 @@ static uint64_t ray_tracing_intersect(const Polygon2D* p, uint64_t pt_index, con
             GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
             GrB_Vector_extractElement(&k, nz_ej, 0);
             GrB_Vector_extractElement(&j, nz_ej, 1);
-            e1_ext1 = get_ith_elem_vec_pts2D(p->vertices, k);
-            e1_ext2 = get_ith_elem_vec_pts2D(p->vertices, j);
-            if (e1_ext1->x < e1_ext2->x){
-                x_min = e1_ext1->x;
-                x_max = e1_ext2->x;
+            e1_ext1 = *get_ith_elem_vec_pts2D(p->vertices, k);
+            e1_ext2 = *get_ith_elem_vec_pts2D(p->vertices, j);
+            if (e1_ext1.x < e1_ext2.x){
+                x_min = e1_ext1.x;
+                x_max = e1_ext2.x;
             } else {
-                x_max = e1_ext1->x;
-                x_min = e1_ext2->x;
+                x_max = e1_ext1.x;
+                x_min = e1_ext2.x;
             }
-            if (e1_ext1->y < e1_ext2->y){
-                y_min = e1_ext1->y;
-                y_max = e1_ext2->y;
+            if (e1_ext1.y < e1_ext2.y){
+                y_min = e1_ext1.y;
+                y_max = e1_ext2.y;
             } else {
-                y_max = e1_ext1->y;
-                y_min = e1_ext2->y;
+                y_max = e1_ext1.y;
+                y_min = e1_ext2.y;
             }
             if ((y_min <= pt->y) && (pt->y < y_max)){
                 if (x_min > pt->x){
                     nb_intersect += 1;
                 } else if (x_max > pt->x){
-                    *e2_ext2 = intersection_edges(ray_edge, (Edge2D){*e1_ext1, *e1_ext2}, true);
-                    if (!isnan(e2_ext2->x)) {
+                    e2_ext2 = intersection_edges(ray_edge, (Edge2D){e1_ext1, e1_ext2}, true);
+                    if (!isnan(e2_ext2.x)) {
                         nb_intersect += 1;
                     }
                 }
@@ -469,6 +469,7 @@ void in_or_out_intersection(const Polygon2D* p, const Vector_points2D* normal_ve
     Point2D normalVector_inters, *pt_inters;
     my_real dpte;
     long int phase, phase1, phase2;
+    GrB_Info infogrb;
 
     GrB_Matrix_ncols(&nb_edges, *(p->edges));
     GrB_Matrix_nrows(&nb_pts, *(p->edges));
@@ -549,7 +550,7 @@ void in_or_out_intersection(const Polygon2D* p, const Vector_points2D* normal_ve
                         i_inters = *get_ith_elem_vec_indices_intersec(s, j);
                         push_back_vec_pts2D(IntersecList_split, get_ith_elem_vec_pts2D(IntersecList, i_inters.i_pt));
                         push_back_vec_uint(edge_intersect1_split, &(i_inters.i_e));
-                        push_back_vec_uint(edge_intersect1_split, &i);
+                        push_back_vec_uint(edge_intersect2_split, &i);
                     }
                 }
                 phase = *get_ith_elem_vec_int(p->phase_face, curr_face);
@@ -574,16 +575,16 @@ void in_or_out_intersection(const Polygon2D* p, const Vector_points2D* normal_ve
                         i_inters = *get_ith_elem_vec_indices_intersec(s, j);
                         push_back_vec_pts2D(IntersecList_fuse, get_ith_elem_vec_pts2D(IntersecList, i_inters.i_pt));
                         push_back_vec_uint(edge_intersect1_fuse, &(i_inters.i_e));
-                        push_back_vec_uint(edge_intersect1_fuse, &i);
+                        push_back_vec_uint(edge_intersect2_fuse, &i);
                     }
                 }
                 phase = *get_ith_elem_vec_int(p->phase_face, curr_face);
                 phase1 = *get_ith_elem_vec_int(p->phase_face, i_face1);
                 phase2 = *get_ith_elem_vec_int(p->phase_face, i_face2);
 
-                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, i_e_inters1, GrB_NULL); 
-                GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
-                GrB_Vector_extractElement(&i_pt_inters, nz_ej, 0);
+                infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, i_e_inters1, GrB_NULL); 
+                infogrb = GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
+                infogrb = GrB_Vector_extractElement(&i_pt_inters, nz_ej, 0);
                 pt_inters = get_ith_elem_vec_pts2D(p->vertices, i_pt_inters);
                 GrB_Matrix_extractElement(&sign, *(p->faces), i_e_inters1, i_face1);
                 normalVector_inters = *get_ith_elem_vec_pts2D(normal_vectors, i_e_inters1);
@@ -591,26 +592,26 @@ void in_or_out_intersection(const Polygon2D* p, const Vector_points2D* normal_ve
                 normalVector_inters.y = sign * normalVector_inters.y;
                 dpte = compute_distance2D(*pt1, normalVector_inters, *pt_inters);
                 if ((phase > 0) && (phase1 > 0) && (phase2 > 0)){
-                    pt_in_or_out_fuse[i_pt1] = (int8_t)(SIGN(dpte));
-                } else {
                     pt_in_or_out_fuse[i_pt1] = -(int8_t)(SIGN(dpte));
+                } else {
+                    pt_in_or_out_fuse[i_pt1] = (int8_t)(SIGN(dpte));
                 }
 
-                GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, i_e_inters2, GrB_NULL); 
-                GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
-                GrB_Vector_extractElement(&i_pt_inters, nz_ej, 0);
+                infogrb = GrB_extract(ej, GrB_NULL, GrB_NULL, *(p->edges), GrB_ALL, 1, i_e_inters2, GrB_NULL); 
+                infogrb = GxB_Vector_extractTuples_Vector(nz_ej, extr_vals_ej, ej, GrB_NULL);
+                infogrb = GrB_Vector_extractElement(&i_pt_inters, nz_ej, 1);
                 pt_inters = get_ith_elem_vec_pts2D(p->vertices, i_pt_inters);
-                GrB_Matrix_extractElement(&sign, *(p->faces), i_e_inters1, i_face1);
-                normalVector_inters = *get_ith_elem_vec_pts2D(normal_vectors, i_e_inters1);
+                GrB_Matrix_extractElement(&sign, *(p->faces), i_e_inters2, i_face1);
+                normalVector_inters = *get_ith_elem_vec_pts2D(normal_vectors, i_e_inters2);
                 normalVector_inters.x = sign * normalVector_inters.x;
                 normalVector_inters.y = sign * normalVector_inters.y;
                 dpte = compute_distance2D(*pt2, normalVector_inters, *pt_inters);
                 if ((phase > 0) && (phase1 > 0) && (phase2 > 0)){
-                    pt_in_or_out_fuse[i_pt2] = (int8_t)(SIGN(dpte));
-                } else {
                     pt_in_or_out_fuse[i_pt2] = -(int8_t)(SIGN(dpte));
+                } else {
+                    pt_in_or_out_fuse[i_pt2] = (int8_t)(SIGN(dpte));
                 }
-            }
+        }
         }
     }
 
